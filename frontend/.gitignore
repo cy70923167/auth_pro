@@ -1,0 +1,10 @@
+node_modules
+.DS_Store
+dist
+dist-ssr
+*.local
+.cursorrules
+
+# Vite generates these declarations, but they are committed because vue-tsc runs before Vite during build.
+.auto-import.json
+

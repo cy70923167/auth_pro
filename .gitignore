@@ -1,0 +1,43 @@
+# Frontend
+frontend/node_modules/
+frontend/dist/
+node_modules/
+
+# Backend runtime artifacts
+backend/auto_pro
+backend/auto_pro.exe
+backend/auto_pro.exe~
+backend/auto_pro_*
+backend/*.log
+backend/*.pid
+backend/db.json
+backend/install.lock
+backend/jwt.secret
+backend/updates/
+
+# Generated backend embedded static assets
+backend/static/*
+!backend/static/.gitkeep
+
+# Release packages
+release/
+
+# Local runtime markers
+*.log
+*.pid
+.kill-done
+.ports-status
+.restart-channel-check
+
+# IDE
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# pnpm store cache
+.pnpm-store/
+.cache/
+
+# Local release archives
+auth_pro-dev 2.zip
