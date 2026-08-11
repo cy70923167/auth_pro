@@ -34,8 +34,8 @@ var AppVersion = "1.0.0"
 // BuildTime 是二进制构建时间，发布时通过 -ldflags 注入。
 var BuildTime = ""
 
-// DefaultUpdateManifestURL 是默认的在线更新清单地址，可用 AUTO_PRO_UPDATE_URL 覆盖。
-const DefaultUpdateManifestURL = "https://e.91ani.cn/latest.json"
+// DefaultUpdateManifestURL 是默认的在线更新清单地址，发布时可通过 -ldflags 注入，运行时可用 AUTO_PRO_UPDATE_URL 覆盖。
+var DefaultUpdateManifestURL = "https://e.91ani.cn/latest.json"
 
 // GetDataDir 获取运行数据目录。
 func GetDataDir() string {

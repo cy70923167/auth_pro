@@ -12,10 +12,12 @@ $ReleaseRoot = Join-Path $Root 'release'
 $PackageDir = Join-Path $ReleaseRoot $DistName
 $PackagesDir = Join-Path $ReleaseRoot 'packages'
 $PackagePath = Join-Path $PackagesDir "$DistName.tar.gz"
+$ChecksumPath = "$PackagePath.sha256"
 $LatestPath = Join-Path $PackagesDir 'latest.json'
 $ReleasesPath = Join-Path $PackagesDir 'releases.json'
 $UpdatePackageBaseUrl = if ($env:AUTO_PRO_UPDATE_PACKAGE_BASE_URL) { $env:AUTO_PRO_UPDATE_PACKAGE_BASE_URL } else { 'https://e.91ani.cn/packages' }
 $UpdateReleasesUrl = if ($env:AUTO_PRO_UPDATE_RELEASES_URL) { $env:AUTO_PRO_UPDATE_RELEASES_URL } else { 'https://e.91ani.cn/releases.json' }
+$UpdateManifestUrl = if ($env:AUTO_PRO_UPDATE_MANIFEST_URL) { $env:AUTO_PRO_UPDATE_MANIFEST_URL } else { 'https://e.91ani.cn/latest.json' }
 
 if ($PackageDir -notlike "$Root*") {
   throw "Invalid package directory: $PackageDir"
@@ -30,7 +32,7 @@ Push-Location $FrontendDir
 $PreviousViteVersion = $env:VITE_VERSION
 try {
   $env:VITE_VERSION = $Version
-  pnpm exec vite build
+  pnpm run build
 } finally {
   if ($null -eq $PreviousViteVersion) {
     Remove-Item Env:VITE_VERSION -ErrorAction SilentlyContinue
@@ -57,6 +59,7 @@ $BackendStaticDir = Join-Path $BackendDir 'static'
 if ($BackendStaticDir -notlike "$Root*") {
   throw "Invalid backend static directory: $BackendStaticDir"
 }
+New-Item -ItemType Directory -Force -Path $BackendStaticDir | Out-Null
 Get-ChildItem -LiteralPath $BackendStaticDir -Force | Remove-Item -Recurse -Force
 Copy-Item -Path (Join-Path $FrontendDist '*') -Destination $BackendStaticDir -Recurse -Force
 
@@ -68,7 +71,7 @@ try {
   $env:GOOS = 'linux'
   $env:GOARCH = 'amd64'
   $env:CGO_ENABLED = '0'
-  go build -trimpath -ldflags "-s -w -X auto_pro/config.AppVersion=$Version -X auto_pro/config.BuildTime=$BuildTime" -o $BackendBinary .
+  go build -trimpath -ldflags "-s -w -X auto_pro/config.AppVersion=$Version -X auto_pro/config.BuildTime=$BuildTime -X auto_pro/config.DefaultUpdateManifestURL=$UpdateManifestUrl" -o $BackendBinary .
 } finally {
   Remove-Item Env:GOOS -ErrorAction SilentlyContinue
   Remove-Item Env:GOARCH -ErrorAction SilentlyContinue
@@ -94,6 +97,8 @@ if (Test-Path $PackagePath) {
 tar -czf $PackagePath -C $PackageDir .
 
 $Hash = (Get-FileHash -LiteralPath $PackagePath -Algorithm SHA256).Hash.ToLower()
+$PackageFileName = [System.IO.Path]::GetFileName($PackagePath)
+[System.IO.File]::WriteAllText($ChecksumPath, "$Hash  $PackageFileName" + [Environment]::NewLine, $Utf8NoBom)
 $Size = (Get-Item -LiteralPath $PackagePath).Length
 $PackageUrl = "$($UpdatePackageBaseUrl.TrimEnd('/'))/$DistName.tar.gz"
 node (Join-Path $Root 'scripts/write-release-manifests.mjs') `
@@ -112,6 +117,7 @@ if ($LASTEXITCODE -ne 0) {
 
 Write-Host ""
 Write-Host "Release package: $PackagePath"
+Write-Host "Checksum file: $ChecksumPath"
 Write-Host "Latest manifest: $LatestPath"
 Write-Host "Release history: $ReleasesPath"
 Write-Host "SHA256: $Hash"

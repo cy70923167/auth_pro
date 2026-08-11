@@ -1,0 +1,185 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag, for example v1.2.3
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: release-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+  cancel-in-progress: false
+
+env:
+  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+
+jobs:
+  build-release:
+    name: Build and publish release
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Validate release version
+        id: version
+        shell: bash
+        run: |
+          if [[ ! "$RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?(\+[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ ]]; then
+            echo "Invalid release tag: $RELEASE_TAG" >&2
+            exit 1
+          fi
+
+          version="${RELEASE_TAG#v}"
+          prerelease=false
+          channel=stable
+          if [[ "$version" == *-* ]]; then
+            prerelease=true
+            channel=prerelease
+          fi
+
+          echo "tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+
+      - name: Check out release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.version.outputs.tag }}
+          fetch-depth: 0
+
+      - name: Configure GitHub Pages
+        id: pages
+        uses: actions/configure-pages@v5
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          package_json_file: frontend/package.json
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.19.0'
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+
+      - name: Install frontend dependencies
+        run: pnpm -C frontend install --frozen-lockfile
+
+      - name: Restore published manifest history
+        shell: bash
+        env:
+          PAGES_BASE_URL: ${{ steps.pages.outputs.base_url }}
+        run: |
+          mkdir -p release/packages
+          for file in latest.json releases.json; do
+            temporary="release/packages/$file.download"
+            if curl --fail --silent --show-error --location \
+              --retry 3 --retry-delay 2 \
+              "$PAGES_BASE_URL/$file" \
+              --output "$temporary"; then
+              mv "$temporary" "release/packages/$file"
+            else
+              rm -f "$temporary"
+              echo "No previous $file found; creating a new manifest."
+            fi
+          done
+
+      - name: Build configured release package
+        shell: bash
+        env:
+          AUTO_PRO_UPDATE_PACKAGE_BASE_URL: https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.tag }}
+          AUTO_PRO_UPDATE_RELEASES_URL: ${{ steps.pages.outputs.base_url }}/releases.json
+          AUTO_PRO_UPDATE_MANIFEST_URL: ${{ steps.pages.outputs.base_url }}/latest.json
+          AUTO_PRO_RELEASE_CHANNEL: ${{ steps.version.outputs.channel }}
+        run: bash scripts/build-release.sh "${{ steps.version.outputs.version }}"
+
+      - name: Validate release outputs
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          package="release/packages/auth_pro-full-v$VERSION.tar.gz"
+          test -s "$package"
+          test -s "$package.sha256"
+          test -s release/packages/latest.json
+          test -s release/packages/releases.json
+          contents="$(tar -tzf "$package")"
+          grep -Fx './index.html' <<< "$contents"
+          grep -Fx './version.json' <<< "$contents"
+          grep -Fx './backend/auth_pro' <<< "$contents"
+          grep -Fx './manifest.json' <<< "$contents"
+          (cd release/packages && sha256sum --check "auth_pro-full-v$VERSION.tar.gz.sha256")
+
+      - name: Publish GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+          PRERELEASE: ${{ steps.version.outputs.prerelease }}
+        run: |
+          assets=(
+            "release/packages/auth_pro-full-v$VERSION.tar.gz"
+            "release/packages/auth_pro-full-v$VERSION.tar.gz.sha256"
+            "release/packages/latest.json"
+            "release/packages/releases.json"
+          )
+
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
+          else
+            arguments=(
+              "$RELEASE_TAG"
+              "${assets[@]}"
+              --verify-tag
+              --title "Auth Pro v$VERSION"
+              --generate-notes
+            )
+            if [[ "$PRERELEASE" == "true" ]]; then
+              arguments+=(--prerelease)
+            fi
+            gh release create "${arguments[@]}"
+          fi
+
+      - name: Prepare Pages update manifests
+        shell: bash
+        run: |
+          mkdir -p release/pages
+          cp release/packages/latest.json release/pages/latest.json
+          cp release/packages/releases.json release/pages/releases.json
+          touch release/pages/.nojekyll
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: release/pages
+
+  deploy-pages:
+    name: Deploy update manifests
+    needs: build-release
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
