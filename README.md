@@ -144,7 +144,7 @@ git push origin v1.2.3
 GitHub Actions 会构建前端和 Linux amd64 后端，创建 GitHub Release，并上传以下三个资产：
 
 ```text
-auth_pro-full-linux-amd64-v1.2.3.tar.gz
+auth_pro-full-v1.2.3.tar.gz
 latest.json
 releases.json
 ```

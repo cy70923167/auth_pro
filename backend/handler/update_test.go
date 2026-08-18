@@ -23,8 +23,8 @@ func validOnlineUpdateManifestForTest() *onlineUpdateManifest {
 		Package: onlineUpdatePackage{
 			OS:       runtime.GOOS,
 			Arch:     runtime.GOARCH,
-			FileName: "auth_pro-full-linux-amd64-v1.0.1.tar.gz",
-			URL:      "https://github.com/cy70923167/auth_pro/releases/download/v1.0.1/auth_pro-full-linux-amd64-v1.0.1.tar.gz",
+			FileName: "auth_pro-full-v1.0.1.tar.gz",
+			URL:      "https://github.com/cy70923167/auth_pro/releases/download/v1.0.1/auth_pro-full-v1.0.1.tar.gz",
 			SHA256:   strings.Repeat("a", 64),
 			Size:     1024,
 		},

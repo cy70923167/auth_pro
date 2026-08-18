@@ -9,7 +9,7 @@ fi
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 FRONTEND_DIR="$ROOT_DIR/frontend"
 BACKEND_DIR="$ROOT_DIR/backend"
-DIST_NAME="auth_pro-full-linux-amd64-v$VERSION"
+DIST_NAME="auth_pro-full-v$VERSION"
 RELEASE_ROOT="$ROOT_DIR/release"
 PACKAGE_DIR="$RELEASE_ROOT/$DIST_NAME"
 PACKAGES_DIR="$RELEASE_ROOT/packages"

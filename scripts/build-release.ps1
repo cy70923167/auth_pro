@@ -11,7 +11,7 @@ if ($Version -notmatch '^\d+\.\d+\.\d+$') {
 $Root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $FrontendDir = Join-Path $Root 'frontend'
 $BackendDir = Join-Path $Root 'backend'
-$DistName = "auth_pro-full-linux-amd64-v$Version"
+$DistName = "auth_pro-full-v$Version"
 $ReleaseRoot = Join-Path $Root 'release'
 $PackageDir = Join-Path $ReleaseRoot $DistName
 $PackagesDir = Join-Path $ReleaseRoot 'packages'

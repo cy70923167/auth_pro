@@ -5,7 +5,7 @@
 ## 标准目录
 
 ```text
-auth_pro-full-linux-amd64-v1.0.0.tar.gz
+auth_pro-full-v1.0.0.tar.gz
 ├── index.html
 ├── version.json
 ├── favicon.ico
@@ -61,7 +61,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\build-release.ps1 
 输出文件固定为：
 
 ```text
-release/packages/auth_pro-full-linux-amd64-v<版本号>.tar.gz
+release/packages/auth_pro-full-v<版本号>.tar.gz
 release/packages/latest.json
 release/packages/releases.json
 ```
@@ -80,7 +80,7 @@ git push origin v1.2.3
 每个 GitHub Release 必须包含：
 
 ```text
-auth_pro-full-linux-amd64-v1.2.3.tar.gz
+auth_pro-full-v1.2.3.tar.gz
 latest.json
 releases.json
 ```

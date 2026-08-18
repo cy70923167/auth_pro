@@ -22,7 +22,7 @@ if (!latestPath || !releasesPath || !version || !releasedAt || !packageFileName 
 if (!/^\d+\.\d+\.\d+$/.test(version)) {
   throw new Error(`Version must match X.Y.Z: ${version}`)
 }
-if (packageFileName !== `auth_pro-full-linux-amd64-v${version}.tar.gz`) {
+if (packageFileName !== `auth_pro-full-v${version}.tar.gz`) {
   throw new Error(`Unexpected package file name: ${packageFileName}`)
 }
 if (!/^[a-f0-9]{64}$/i.test(packageSha256)) {

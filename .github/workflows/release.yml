@@ -85,7 +85,7 @@ jobs:
           VERSION: ${{ steps.version.outputs.value }}
         run: |
           set -euo pipefail
-          PACKAGE="release/packages/auth_pro-full-linux-amd64-v${VERSION}.tar.gz"
+          PACKAGE="release/packages/auth_pro-full-v${VERSION}.tar.gz"
           VERIFY_DIR="$(mktemp -d)"
           test -s "$PACKAGE"
           test -s release/packages/latest.json
@@ -105,7 +105,7 @@ jobs:
             const latest = JSON.parse(fs.readFileSync("release/packages/latest.json", "utf8"))
             const history = JSON.parse(fs.readFileSync("release/packages/releases.json", "utf8"))
             const inner = JSON.parse(fs.readFileSync(path.join(verifyDir, "manifest.json"), "utf8"))
-            const expectedName = `auth_pro-full-linux-amd64-v${version}.tar.gz`
+            const expectedName = `auth_pro-full-v${version}.tar.gz`
             const packageData = fs.readFileSync(packagePath)
             const actualSha256 = crypto.createHash("sha256").update(packageData).digest("hex")
             if (latest.version !== version) throw new Error("latest.json version mismatch")
@@ -129,7 +129,7 @@ jobs:
         run: |
           set -euo pipefail
           gh release create "$GITHUB_REF_NAME" \
-            "release/packages/auth_pro-full-linux-amd64-v${VERSION}.tar.gz" \
+            "release/packages/auth_pro-full-v${VERSION}.tar.gz" \
             release/packages/latest.json \
             release/packages/releases.json \
             --verify-tag \
