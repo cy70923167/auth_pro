@@ -1,0 +1,58 @@
+<!doctype html>
+<html>
+  <head>
+    <title>授权管理系统</title>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="专业的软件授权与服务平台"
+    />
+    <link rel="icon" type="image/png" href="../哈士奇 (1).png" />
+
+    <style>
+      /* 防止页面刷新时白屏的初始样式 */
+      html {
+        background-color: #fafbfc;
+      }
+
+      html.dark {
+        background-color: #070707;
+      }
+    </style>
+
+    <script>
+      // 初始化 html class 主题属性
+      ;(function () {
+        try {
+          if (typeof Storage === 'undefined' || !window.localStorage) {
+            return
+          }
+
+          const path = window.location.pathname
+          const isUserPanel = /^\/user(?:\/|$)/.test(path)
+          const isAgentPanel = /^\/agent(?:\/|$)/.test(path)
+          const themeKey = isUserPanel
+            ? 'sys-theme-user'
+            : isAgentPanel
+              ? 'sys-theme-agent'
+              : 'sys-theme'
+          const defaultTheme = isUserPanel || isAgentPanel ? 'light' : null
+          const themeMode = localStorage.getItem(themeKey) || defaultTheme
+          const isDark =
+            themeMode === 'dark' ||
+            (themeMode === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches)
+
+          document.documentElement.classList.toggle('dark', isDark)
+        } catch (e) {
+          console.warn('Failed to apply initial theme:', e)
+        }
+      })()
+    </script>
+  </head>
+
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

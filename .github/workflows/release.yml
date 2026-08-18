@@ -1,0 +1,138 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build and publish Linux amd64 release
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate release tag
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$GITHUB_REF_NAME" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+            echo "Tag must match vX.Y.Z: $GITHUB_REF_NAME" >&2
+            exit 1
+          fi
+          echo "value=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.15.1
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22.x'
+          cache-dependency-path: backend/go.sum
+
+      - name: Install frontend dependencies
+        run: pnpm -C frontend install --frozen-lockfile
+
+      - name: Restore release history
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release/packages
+          curl --fail --silent --show-error --location \
+            --proto '=https' --max-redirs 5 \
+            'https://github.com/cy70923167/auth_pro/releases/latest/download/releases.json' \
+            --output release/packages/releases.json || rm -f release/packages/releases.json
+
+      - name: Build release package
+        shell: bash
+        env:
+          AUTO_PRO_GITHUB_REPOSITORY: cy70923167/auth_pro
+          AUTO_PRO_REQUIRE_GIT_RELEASE_NOTES: '1'
+        run: ./scripts/build-release.sh '${{ steps.version.outputs.value }}'
+
+      - name: Run backend tests
+        working-directory: backend
+        run: go test ./...
+
+      - name: Verify release assets
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.value }}
+        run: |
+          set -euo pipefail
+          PACKAGE="release/packages/auth_pro-full-linux-amd64-v${VERSION}.tar.gz"
+          VERIFY_DIR="$(mktemp -d)"
+          test -s "$PACKAGE"
+          test -s release/packages/latest.json
+          test -s release/packages/releases.json
+          tar -xzf "$PACKAGE" -C "$VERIFY_DIR" \
+            ./manifest.json \
+            ./backend/auth_pro \
+            ./index.html
+          file "$VERIFY_DIR/backend/auth_pro" | grep -Eq 'ELF 64-bit.*x86-64'
+          node -e '
+            const crypto = require("node:crypto")
+            const fs = require("node:fs")
+            const path = require("node:path")
+            const version = process.env.VERSION
+            const packagePath = process.argv[1]
+            const verifyDir = process.argv[2]
+            const latest = JSON.parse(fs.readFileSync("release/packages/latest.json", "utf8"))
+            const history = JSON.parse(fs.readFileSync("release/packages/releases.json", "utf8"))
+            const inner = JSON.parse(fs.readFileSync(path.join(verifyDir, "manifest.json"), "utf8"))
+            const expectedName = `auth_pro-full-linux-amd64-v${version}.tar.gz`
+            const packageData = fs.readFileSync(packagePath)
+            const actualSha256 = crypto.createHash("sha256").update(packageData).digest("hex")
+            if (latest.version !== version) throw new Error("latest.json version mismatch")
+            if (latest.package?.os !== "linux" || latest.package?.arch !== "amd64") throw new Error("latest.json platform mismatch")
+            if (latest.package?.fileName !== expectedName) throw new Error("latest.json package name mismatch")
+            if (!new RegExp(`/releases/download/v${version}/${expectedName}$`).test(latest.package?.url || "")) throw new Error("latest.json package URL mismatch")
+            if (latest.package?.sha256 !== actualSha256) throw new Error("latest.json SHA256 mismatch")
+            if (latest.package?.size !== packageData.length) throw new Error("latest.json size mismatch")
+            if (inner.version !== version || inner.frontendDir !== "." || inner.backendFile !== "backend/auth_pro") throw new Error("package manifest mismatch")
+            if (!Array.isArray(latest.notes) || latest.notes.length === 0 || latest.notes.some((note) => typeof note !== "string" || !note.trim())) throw new Error("latest.json release notes missing")
+            if (!Array.isArray(history.releases) || history.releases[0]?.version !== version) throw new Error("releases.json latest version mismatch")
+            if (!Array.isArray(history.releases[0]?.notes) || history.releases[0].notes.length === 0) throw new Error("releases.json release notes missing")
+            if (JSON.stringify(history.releases[0].notes) !== JSON.stringify(latest.notes)) throw new Error("release notes mismatch")
+          ' "$PACKAGE" "$VERIFY_DIR"
+
+      - name: Publish GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.value }}
+        run: |
+          set -euo pipefail
+          gh release create "$GITHUB_REF_NAME" \
+            "release/packages/auth_pro-full-linux-amd64-v${VERSION}.tar.gz" \
+            release/packages/latest.json \
+            release/packages/releases.json \
+            --verify-tag \
+            --latest \
+            --generate-notes \
+            --title "$GITHUB_REF_NAME"
