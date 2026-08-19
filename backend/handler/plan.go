@@ -2,6 +2,7 @@ package handler
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -107,6 +108,20 @@ func PlanList(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"code": 200, "msg": "", "data": list})
 }
 
+func validatePlanLicenseTypeForApp(db *sql.DB, appID int64, licenseType string) error {
+	if err := EnsureAppPurchaseLicenseTypesColumn(db); err != nil {
+		return err
+	}
+	var mask uint8
+	if err := db.QueryRow("SELECT purchase_license_type_mask FROM apps WHERE id = ?", appID).Scan(&mask); err != nil {
+		return err
+	}
+	if licenseType != "" && !purchaseLicenseTypeAllowed(mask, licenseType) {
+		return errPurchaseTypeNotAllowed
+	}
+	return nil
+}
+
 // PlanCreate 新增套餐
 func PlanCreate(c *gin.Context) {
 	var req struct {
@@ -145,10 +160,15 @@ func PlanCreate(c *gin.Context) {
 		return
 	}
 
-	var appExists int
-	db.QueryRow("SELECT COUNT(*) FROM apps WHERE id = ?", req.AppID).Scan(&appExists)
-	if appExists == 0 {
-		c.JSON(http.StatusOK, gin.H{"code": 400, "msg": "应用不存在"})
+	if err := validatePlanLicenseTypeForApp(db, req.AppID, req.LicenseType); err != nil {
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			c.JSON(http.StatusOK, gin.H{"code": 400, "msg": "应用不存在"})
+		case errors.Is(err, errPurchaseTypeNotAllowed):
+			c.JSON(http.StatusOK, gin.H{"code": 400, "msg": "所选授权方式未在该应用中启用"})
+		default:
+			c.JSON(http.StatusOK, gin.H{"code": 500, "msg": "读取应用授权方式失败"})
+		}
 		return
 	}
 
@@ -201,6 +221,17 @@ func PlanUpdate(c *gin.Context) {
 	defer db.Close()
 	if err := ensurePlanLicenseType(db); err != nil {
 		c.JSON(http.StatusOK, gin.H{"code": 500, "msg": "初始化套餐授权方式失败: " + err.Error()})
+		return
+	}
+	if err := validatePlanLicenseTypeForApp(db, req.AppID, req.LicenseType); err != nil {
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			c.JSON(http.StatusOK, gin.H{"code": 400, "msg": "应用不存在"})
+		case errors.Is(err, errPurchaseTypeNotAllowed):
+			c.JSON(http.StatusOK, gin.H{"code": 400, "msg": "所选授权方式未在该应用中启用"})
+		default:
+			c.JSON(http.StatusOK, gin.H{"code": 500, "msg": "读取应用授权方式失败"})
+		}
 		return
 	}
 

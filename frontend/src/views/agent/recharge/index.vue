@@ -41,6 +41,7 @@
             <el-option label="充值" value="recharge" />
             <el-option label="消费" value="consume" />
             <el-option label="退款" value="refund" />
+            <el-option label="开通赠送" value="bonus" />
           </el-select>
         </el-form-item>
         <el-form-item label="时间范围">
@@ -81,9 +82,7 @@
           </template>
         </el-table-column>
         <el-table-column prop="balanceAfter" label="余额(元)" width="110" align="right">
-          <template #default="{ row }">
-            ¥{{ row.balanceAfter.toFixed(2) }}
-          </template>
+          <template #default="{ row }"> ¥{{ row.balanceAfter.toFixed(2) }} </template>
         </el-table-column>
         <el-table-column prop="remark" label="备注" min-width="150" show-overflow-tooltip />
         <el-table-column prop="createdAt" label="时间" width="170" />
@@ -105,89 +104,128 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
-import request from '@/utils/http'
+  import { ref, reactive, onMounted } from 'vue'
+  import request from '@/utils/http'
 
-const loading = ref(false)
+  const loading = ref(false)
 
-const stats = reactive({
-  totalRecharge: 0,
-  totalConsume: 0,
-  monthRecharge: 0,
-  monthConsume: 0
-})
+  const stats = reactive({
+    totalRecharge: 0,
+    totalConsume: 0,
+    monthRecharge: 0,
+    monthConsume: 0
+  })
 
-const searchForm = reactive({ agentId: '', type: '', dateRange: [] as any[] })
-const pagination = reactive({ page: 1, pageSize: 20, total: 0 })
+  const searchForm = reactive({ agentId: '', type: '', dateRange: [] as any[] })
+  const pagination = reactive({ page: 1, pageSize: 20, total: 0 })
 
-const agentList = ref<{ id: string; name: string }[]>([])
-const typeTagMap: Record<string, 'primary' | 'success' | 'warning' | 'info' | 'danger' | undefined> = { recharge: 'success', consume: 'danger', refund: 'warning' } as const
-const tableData = ref<any[]>([])
+  const agentList = ref<{ id: string; name: string }[]>([])
+  const typeTagMap: Record<
+    string,
+    'primary' | 'success' | 'warning' | 'info' | 'danger' | undefined
+  > = {
+    recharge: 'success',
+    consume: 'danger',
+    refund: 'warning',
+    transfer: 'info',
+    bonus: 'success'
+  } as const
+  const tableData = ref<any[]>([])
 
-async function fetchStats() {
-  try {
-    const data = await request.get<any>({ url: '/api/transaction/stats' })
-    Object.assign(stats, data)
-  } catch {}
-}
-
-async function fetchAgentList() {
-  try {
-    const data = await request.get<any[]>({ url: '/api/agent/select-list' })
-    agentList.value = (data || []).map((a: any) => ({ id: String(a.id), name: a.name }))
-  } catch {}
-}
-
-async function handleSearch() {
-  loading.value = true
-  try {
-    const params: Record<string, any> = { page: pagination.page, pageSize: pagination.pageSize }
-    if (searchForm.agentId) params.agentId = searchForm.agentId
-    if (searchForm.type) params.type = searchForm.type
-    if (searchForm.dateRange && searchForm.dateRange.length === 2) {
-      const fmt = (d: Date) => d.toISOString().slice(0, 10)
-      params.startDate = fmt(searchForm.dateRange[0])
-      params.endDate = fmt(searchForm.dateRange[1])
+  async function fetchStats() {
+    try {
+      const data = await request.get<any>({ url: '/api/transaction/stats' })
+      Object.assign(stats, data)
+    } catch {
+      return
     }
-
-    const data = await request.get<{ list: any[]; total: number }>({ url: '/api/transaction/list', params })
-    tableData.value = data.list || []
-    pagination.total = data.total || 0
-  } catch (e) {
-    console.error('[Transaction] 查询失败:', e)
-  } finally {
-    loading.value = false
   }
-}
 
-function handleReset() {
-  searchForm.agentId = ''
-  searchForm.type = ''
-  searchForm.dateRange = []
-  pagination.page = 1
-  handleSearch()
-}
+  async function fetchAgentList() {
+    try {
+      const data = await request.get<any[]>({ url: '/api/agent/select-list' })
+      agentList.value = (data || []).map((a: any) => ({ id: String(a.id), name: a.name }))
+    } catch {
+      return
+    }
+  }
 
-onMounted(() => {
-  fetchStats()
-  fetchAgentList()
-  handleSearch()
-})
+  async function handleSearch() {
+    loading.value = true
+    try {
+      const params: Record<string, any> = { page: pagination.page, pageSize: pagination.pageSize }
+      if (searchForm.agentId) params.agentId = searchForm.agentId
+      if (searchForm.type) params.type = searchForm.type
+      if (searchForm.dateRange && searchForm.dateRange.length === 2) {
+        const fmt = (d: Date) => d.toISOString().slice(0, 10)
+        params.startDate = fmt(searchForm.dateRange[0])
+        params.endDate = fmt(searchForm.dateRange[1])
+      }
+
+      const data = await request.get<{ list: any[]; total: number }>({
+        url: '/api/transaction/list',
+        params
+      })
+      tableData.value = data.list || []
+      pagination.total = data.total || 0
+    } catch (e) {
+      console.error('[Transaction] 查询失败:', e)
+    } finally {
+      loading.value = false
+    }
+  }
+
+  function handleReset() {
+    searchForm.agentId = ''
+    searchForm.type = ''
+    searchForm.dateRange = []
+    pagination.page = 1
+    handleSearch()
+  }
+
+  onMounted(() => {
+    fetchStats()
+    fetchAgentList()
+    handleSearch()
+  })
 </script>
 
 <style scoped lang="scss">
-.mb-4 { margin-bottom: 16px; }
-.card-title { font-weight: 600; }
-.pagination-wrapper { display: flex; justify-content: flex-end; margin-top: 16px; }
+  .mb-4 {
+    margin-bottom: 16px;
+  }
+  .card-title {
+    font-weight: 600;
+  }
+  .pagination-wrapper {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 16px;
+  }
 
-.stats-card {
-  text-align: center;
-  .stats-title { font-size: 13px; color: var(--el-text-color-secondary); margin-bottom: 8px; }
-  .stats-value { font-size: 22px; font-weight: 600; }
-}
+  .stats-card {
+    text-align: center;
+    .stats-title {
+      font-size: 13px;
+      color: var(--el-text-color-secondary);
+      margin-bottom: 8px;
+    }
+    .stats-value {
+      font-size: 22px;
+      font-weight: 600;
+    }
+  }
 
-.text-primary { color: var(--el-color-primary); }
-.text-success { color: #67c23a; }
-.text-danger { color: #f56c6c; }
-.text-warning { color: #e6a23c; }
+  .text-primary {
+    color: var(--el-color-primary);
+  }
+  .text-success {
+    color: #67c23a;
+  }
+  .text-danger {
+    color: #f56c6c;
+  }
+  .text-warning {
+    color: #e6a23c;
+  }
 </style>

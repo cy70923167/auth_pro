@@ -28,6 +28,10 @@
           <el-icon><iconify-icon icon="ri:settings-3-line" /></el-icon>
           <template #title>个人设置</template>
         </el-menu-item>
+        <el-menu-item index="/user/become-agent">
+          <el-icon><iconify-icon icon="ri:user-star-line" /></el-icon>
+          <template #title>开通代理商</template>
+        </el-menu-item>
       </el-menu>
     </aside>
 
@@ -68,7 +72,7 @@
       <main
         class="panel-content"
         :class="{
-          'is-panel-surface': ['/user/dashboard', '/user/profile'].includes(currentRoute)
+          'is-panel-surface': ['/user/dashboard', '/user/profile', '/user/become-agent'].includes(currentRoute)
         }"
       >
         <router-view />
@@ -147,7 +151,8 @@ const titleMap: Record<string, string> = {
   '/user/dashboard': '概览',
   '/user/licenses': '我的授权',
   '/user/purchase': '购买授权',
-  '/user/profile': '个人设置'
+  '/user/profile': '个人设置',
+  '/user/become-agent': '开通代理商'
 }
 
 const currentTitle = computed(() => titleMap[route.path] || '概览')

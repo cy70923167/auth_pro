@@ -70,7 +70,7 @@ func UserLogin(c *gin.Context) {
 	}
 	defer db.Close()
 
-	if err := ensureUserAuthStorage(db); err != nil {
+	if err := EnsureAccountUpgradeSchema(db); err != nil {
 		c.JSON(http.StatusOK, gin.H{"code": 500, "msg": "初始化失败"})
 		return
 	}
@@ -78,19 +78,28 @@ func UserLogin(c *gin.Context) {
 	// 账号类型识别：含 @ 按邮箱；纯数字同时匹配手机号与用户ID（手机号优先，
 	// 自增ID与11位手机号冲突概率可忽略）；其余输入按手机号匹配
 	var id uint
-	var email, passwordHash, nickname string
+	var email, passwordHash, nickname, accountStatus string
+	var enabled bool
+	var convertedAgentID sql.NullInt64
 	var row *sql.Row
 	if strings.Contains(account, "@") {
-		row = db.QueryRow("SELECT id, email, password_hash, nickname FROM users WHERE email = ? AND enabled = 1", strings.ToLower(account))
+		row = db.QueryRow(`
+			SELECT id, email, password_hash, nickname, enabled, account_status, converted_agent_id
+			FROM users WHERE email = ?
+		`, strings.ToLower(account))
 	} else if uid, parseErr := strconv.ParseUint(account, 10, 64); parseErr == nil {
-		row = db.QueryRow(
-			"SELECT id, email, password_hash, nickname FROM users WHERE (phone = ? OR id = ?) AND enabled = 1 ORDER BY (phone = ?) DESC LIMIT 1",
-			account, uid, account,
-		)
+		row = db.QueryRow(`
+			SELECT id, email, password_hash, nickname, enabled, account_status, converted_agent_id
+			FROM users WHERE phone = ? OR id = ?
+			ORDER BY (phone = ?) DESC LIMIT 1
+		`, account, uid, account)
 	} else {
-		row = db.QueryRow("SELECT id, email, password_hash, nickname FROM users WHERE phone = ? AND enabled = 1", account)
+		row = db.QueryRow(`
+			SELECT id, email, password_hash, nickname, enabled, account_status, converted_agent_id
+			FROM users WHERE phone = ?
+		`, account)
 	}
-	err = row.Scan(&id, &email, &passwordHash, &nickname)
+	err = row.Scan(&id, &email, &passwordHash, &nickname, &enabled, &accountStatus, &convertedAgentID)
 	if err != nil {
 		middleware.RecordLoginFailure(c.ClientIP(), account)
 		c.JSON(http.StatusOK, gin.H{"code": 401, "msg": "账号或密码错误"})
@@ -100,6 +109,20 @@ func UserLogin(c *gin.Context) {
 	if err := bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(req.Password)); err != nil {
 		middleware.RecordLoginFailure(c.ClientIP(), account)
 		c.JSON(http.StatusOK, gin.H{"code": 401, "msg": "账号或密码错误"})
+		return
+	}
+	if accountStatus == "converted" || convertedAgentID.Valid {
+		middleware.RecordLoginSuccess(c.ClientIP(), account)
+		c.JSON(http.StatusOK, gin.H{
+			"code": 409,
+			"msg":  "该账号已升级为代理，请前往代理端登录",
+			"data": gin.H{"converted": true, "agentId": convertedAgentID.Int64, "loginPath": "/agent-panel/login?upgraded=1"},
+		})
+		return
+	}
+	if !enabled {
+		middleware.RecordLoginFailure(c.ClientIP(), account)
+		c.JSON(http.StatusOK, gin.H{"code": 401, "msg": "账号已禁用"})
 		return
 	}
 

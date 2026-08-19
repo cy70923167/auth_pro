@@ -219,11 +219,18 @@ func settleEpayCallback(db *sql.DB, params map[string]string) error {
 	}
 
 	payload, _ := json.Marshal(params)
-	if err := settleRechargeOrder(db, orderNo, paidCents, params["trade_no"], params["type"], string(payload)); err == nil {
+	payMethod, ok := normalizeEpayPayType(params["type"], "")
+	if !ok {
+		return errors.New("回调支付方式不受支持")
+	}
+	if strings.HasPrefix(orderNo, "AU") {
+		return settleAgentUpgradeOnlinePayment(db, orderNo, paidCents, payChannelEpayV1, payMethod, params["trade_no"], string(payload))
+	}
+	if err := settleRechargeOrder(db, orderNo, paidCents, params["trade_no"], payMethod, string(payload)); err == nil {
 		return nil
 	}
 	// 不是充值订单时，尝试按授权购买订单结算（代理端线上支付开通授权）。
-	return settleLicensePurchaseOrder(db, orderNo, paidCents, params["trade_no"], params["type"], string(payload))
+	return settleLicensePurchaseOrder(db, orderNo, paidCents, payChannelEpayV1, params["trade_no"], payMethod, string(payload))
 }
 
 // EpayNotify 易支付异步通知入口。只有验签、金额、订单号全部通过后才入账。
@@ -1266,9 +1273,21 @@ func loadRechargeReturnURL(orderNo string) string {
 
 	var returnURL string
 	if err := db.QueryRow("SELECT return_url FROM recharge_orders WHERE order_no = ?", orderNo).Scan(&returnURL); err != nil {
-		// 充值订单查不到时，再查授权购买订单（代理/用户线上购买），两者共用回跳地址表
+		// 充值订单查不到时，再查授权购买或代理升级订单；三类订单共用回跳地址。
 		if err2 := db.QueryRow("SELECT return_url FROM license_purchase_orders WHERE order_no = ?", orderNo).Scan(&returnURL); err2 != nil {
-			return ""
+			var upgradeStatus string
+			if err3 := db.QueryRow("SELECT return_url, status FROM agent_upgrade_orders WHERE order_no = ?", orderNo).Scan(&returnURL, &upgradeStatus); err3 != nil {
+				return ""
+			}
+			if upgradeStatus == "completed" {
+				parsed, err := url.Parse(strings.TrimSpace(returnURL))
+				if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+					return ""
+				}
+				parsed.Path = "/agent-panel/login"
+				parsed.RawQuery = url.Values{"upgraded": []string{"1"}}.Encode()
+				returnURL = parsed.String()
+			}
 		}
 	}
 	returnURL = strings.TrimSpace(returnURL)

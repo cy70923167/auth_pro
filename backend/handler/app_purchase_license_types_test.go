@@ -36,6 +36,10 @@ type purchaseLicenseTypeTestState struct {
 	execQueries           []string
 	execArgs              [][]driver.NamedValue
 	failTransactionInsert bool
+	purchasePayChannel    string
+	purchasePayMethod     string
+	purchaseTradeNo       string
+	purchaseStatus        string
 	commits               int
 	rollbacks             int
 }
@@ -87,9 +91,21 @@ func (conn *purchaseLicenseTypeTestConn) QueryContext(_ context.Context, query s
 			values:  [][]driver.Value{{int64(conn.state.mask)}},
 		}, nil
 	case strings.Contains(query, "FROM license_purchase_orders") && strings.Contains(query, "FOR UPDATE"):
+		payChannel := conn.state.purchasePayChannel
+		if payChannel == "" {
+			payChannel = payChannelEpayV1
+		}
+		payMethod := conn.state.purchasePayMethod
+		if payMethod == "" {
+			payMethod = "alipay"
+		}
+		status := conn.state.purchaseStatus
+		if status == "" {
+			status = "pending"
+		}
 		return &purchaseLicenseTypeTestRows{
-			columns: []string{"id", "agent_id", "owner_type", "owner_id", "app_id", "plan_id", "type", "target", "amount", "original_amount", "status", "app_name_snapshot", "plan_name_snapshot", "duration_days_snapshot"},
-			values:  [][]driver.Value{{int64(1), int64(7), "user", int64(42), int64(9), int64(3), "key", "", "10.00", "20.00", "pending", "Test App", "Test Plan", int64(30)}},
+			columns: []string{"id", "agent_id", "owner_type", "owner_id", "app_id", "plan_id", "type", "target", "amount", "original_amount", "status", "app_name_snapshot", "plan_name_snapshot", "duration_days_snapshot", "pay_channel", "pay_method", "gateway_trade_no"},
+			values:  [][]driver.Value{{int64(1), int64(7), "user", int64(42), int64(9), int64(3), "key", "", "10.00", "20.00", status, "Test App", "Test Plan", int64(30), payChannel, payMethod, conn.state.purchaseTradeNo}},
 		}, nil
 	case strings.Contains(query, "SELECT a.app_name, p.name, p.duration_days"):
 		return &purchaseLicenseTypeTestRows{
@@ -348,6 +364,22 @@ func TestPurchaseLicenseTypeConfigurationIsPerApp(t *testing.T) {
 	}
 }
 
+func TestValidatePlanLicenseTypeForApp(t *testing.T) {
+	db := openPurchaseLicenseTypeTestDB(t, &purchaseLicenseTypeTestState{
+		mask:      purchaseLicenseTypeDomain | purchaseLicenseTypeIP,
+		appExists: true,
+	})
+
+	for _, licenseType := range []string{"", "domain", "ip"} {
+		if err := validatePlanLicenseTypeForApp(db, 1, licenseType); err != nil {
+			t.Fatalf("configured plan license type %q rejected: %v", licenseType, err)
+		}
+	}
+	if err := validatePlanLicenseTypeForApp(db, 1, "key"); !errors.Is(err, errPurchaseTypeNotAllowed) {
+		t.Fatalf("unconfigured plan license type error = %v", err)
+	}
+}
+
 func TestRequireAppPurchaseLicenseType(t *testing.T) {
 	t.Run("allowed", func(t *testing.T) {
 		db := openPurchaseLicenseTypeTestDB(t, &purchaseLicenseTypeTestState{
@@ -416,7 +448,7 @@ func TestDisabledTypeDoesNotCreateOnlinePurchaseOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 	err = insertAllowedLicensePurchaseOrder(
-		db, "LP-test", 2, "agent", 2, "key", "", plan, quote, "alipay", "https://example.test/return",
+		db, "LP-test", 2, "agent", 2, "key", "", plan, quote, payChannelEpayV1, "alipay", "https://example.test/return",
 	)
 	if !errors.Is(err, errPurchaseTypeNotAllowed) {
 		t.Fatalf("disabled online order error = %v", err)
@@ -452,7 +484,7 @@ func TestAllowedTypeCreatesOnlinePurchaseOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 	err = insertAllowedLicensePurchaseOrder(
-		db, "LP-test", 2, "agent", 2, "key", "", plan, quote, "alipay", "https://example.test/return",
+		db, "LP-test", 2, "agent", 2, "key", "", plan, quote, payChannelEpayV1, "alipay", "https://example.test/return",
 	)
 	if err != nil {
 		t.Fatalf("allowed online order rejected: %v", err)
@@ -470,7 +502,7 @@ func TestAllowedTypeCreatesOnlinePurchaseOrder(t *testing.T) {
 	if strings.Count(query, "?") != len(args) {
 		t.Fatalf("online order placeholders=%d args=%d", strings.Count(query, "?"), len(args))
 	}
-	if len(args) != 23 || args[9].Value != "8.00" || args[10].Value != "20.00" || args[11].Value != "10.00" || args[12].Value != "2.00" || args[13].Value != int64(41) || args[14].Value != "代理活动" || args[17].Value != "Test App" || args[18].Value != "Test Plan" || args[19].Value != int64(30) {
+	if len(args) != 24 || args[9].Value != "8.00" || args[10].Value != "20.00" || args[11].Value != "10.00" || args[12].Value != "2.00" || args[13].Value != int64(41) || args[14].Value != "代理活动" || args[17].Value != "Test App" || args[18].Value != "Test Plan" || args[19].Value != int64(30) || args[20].Value != payChannelEpayV1 || args[21].Value != "alipay" {
 		t.Fatalf("unexpected online order snapshot args: %#v", args)
 	}
 	var pricing purchasePricingSnapshot
@@ -498,7 +530,7 @@ func TestExistingOnlineOrderSettlesFromSnapshotAfterTypeDisabled(t *testing.T) {
 	queuePurchaseSuccessMail = func(string, int64, int64) {}
 	t.Cleanup(func() { queuePurchaseSuccessMail = previousQueue })
 
-	if err := settleLicensePurchaseOrder(db, "LP-existing", 1000, "trade-1", "alipay", "{}"); err != nil {
+	if err := settleLicensePurchaseOrder(db, "LP-existing", 1000, payChannelEpayV1, "trade-1", "alipay", "{}"); err != nil {
 		t.Fatalf("settle existing order after type disabled: %v", err)
 	}
 
@@ -534,6 +566,67 @@ func TestExistingOnlineOrderSettlesFromSnapshotAfterTypeDisabled(t *testing.T) {
 	}
 	if !foundAgentTransaction {
 		t.Fatal("settlement did not attribute consumption to the paying agent")
+	}
+}
+
+func TestOnlinePurchaseSettlementRejectsPaymentMismatches(t *testing.T) {
+	tests := []struct {
+		name       string
+		state      purchaseLicenseTypeTestState
+		paidCents  int64
+		payChannel string
+		tradeNo    string
+		payMethod  string
+	}{
+		{name: "amount", paidCents: 999, payChannel: payChannelEpayV1, tradeNo: "trade-1", payMethod: "alipay"},
+		{name: "channel", state: purchaseLicenseTypeTestState{purchasePayChannel: payChannelEpayV2}, paidCents: 1000, payChannel: payChannelEpayV1, tradeNo: "trade-1", payMethod: "alipay"},
+		{name: "method", state: purchaseLicenseTypeTestState{purchasePayMethod: "wxpay"}, paidCents: 1000, payChannel: payChannelEpayV1, tradeNo: "trade-1", payMethod: "alipay"},
+		{name: "gateway trade", state: purchaseLicenseTypeTestState{purchaseTradeNo: "trade-original"}, paidCents: 1000, payChannel: payChannelEpayV1, tradeNo: "trade-forged", payMethod: "alipay"},
+		{name: "cancelled order", state: purchaseLicenseTypeTestState{purchaseStatus: "cancelled"}, paidCents: 1000, payChannel: payChannelEpayV1, tradeNo: "trade-1", payMethod: "alipay"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			state := tt.state
+			state.appExists = true
+			db := openPurchaseLicenseTypeTestDB(t, &state)
+			if err := settleLicensePurchaseOrder(db, "LP-existing", tt.paidCents, tt.payChannel, tt.tradeNo, tt.payMethod, "{}"); err == nil {
+				t.Fatal("mismatched purchase callback was accepted")
+			}
+
+			state.mu.Lock()
+			defer state.mu.Unlock()
+			for _, query := range state.execQueries {
+				if strings.Contains(query, "INSERT INTO licenses") || strings.Contains(query, "SET status = 'paid'") {
+					t.Fatalf("rejected callback mutated purchase state: %s", query)
+				}
+			}
+		})
+	}
+}
+
+func TestOnlinePurchaseSettlementIsIdempotent(t *testing.T) {
+	state := &purchaseLicenseTypeTestState{
+		appExists:          true,
+		purchaseStatus:     "paid",
+		purchasePayChannel: payChannelEpayV2,
+		purchasePayMethod:  "wxpay",
+		purchaseTradeNo:    "trade-2",
+	}
+	db := openPurchaseLicenseTypeTestDB(t, state)
+	if err := settleLicensePurchaseOrder(db, "LP-existing", 1000, payChannelEpayV2, "trade-2", "wxpay", "{}"); err != nil {
+		t.Fatalf("repeat purchase callback failed: %v", err)
+	}
+
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if state.commits != 1 {
+		t.Fatalf("repeat callback commits=%d, want 1", state.commits)
+	}
+	for _, query := range state.execQueries {
+		if strings.Contains(query, "INSERT INTO licenses") || strings.Contains(query, "SET status = 'paid'") {
+			t.Fatalf("repeat callback duplicated purchase settlement: %s", query)
+		}
 	}
 }
 

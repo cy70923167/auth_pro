@@ -2,6 +2,7 @@ package handler
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -12,10 +13,40 @@ import (
 )
 
 type payOption struct {
-	Code  string `json:"code"`
-	Label string `json:"label"`
-	Icon  string `json:"icon"`
-	Color string `json:"color"`
+	Code    string `json:"code"`
+	Channel string `json:"channel,omitempty"`
+	PayType string `json:"payType,omitempty"`
+	Label   string `json:"label"`
+	Icon    string `json:"icon"`
+	Color   string `json:"color"`
+}
+
+const (
+	payChannelEpayV1 = "easypay"
+	payChannelEpayV2 = "easypay-v2"
+)
+
+type onlinePaySelection struct {
+	Channel string
+	PayType string
+}
+
+func parseOnlinePaySelection(value string) (onlinePaySelection, bool) {
+	parts := strings.SplitN(strings.TrimSpace(value), ":", 2)
+	channel := ""
+	payTypeText := parts[0]
+	if len(parts) == 2 {
+		channel = strings.TrimSpace(parts[0])
+		payTypeText = parts[1]
+		if channel != payChannelEpayV1 && channel != payChannelEpayV2 {
+			return onlinePaySelection{}, false
+		}
+	}
+	payType, ok := normalizeEpayPayType(payTypeText, "")
+	if !ok {
+		return onlinePaySelection{}, false
+	}
+	return onlinePaySelection{Channel: channel, PayType: payType}, true
 }
 
 func discountedAgentPrice(price, discount float64) float64 {
@@ -83,7 +114,7 @@ func AgentPanelPurchasePayOptions(c *gin.Context) {
 	})
 }
 
-func epayPayTypeOptions(payTypes []string) []payOption {
+func epayPayTypeOptions(channel string, payTypes []string) []payOption {
 	type meta struct {
 		label string
 		icon  string
@@ -95,6 +126,10 @@ func epayPayTypeOptions(payTypes []string) []payOption {
 		"qqpay":  {"QQ钱包", "ri:qq-fill", "#12b7f5"},
 		"bank":   {"网银支付", "ri:bank-card-line", "#d4380d"},
 	}
+	channelLabel := "V1"
+	if channel == payChannelEpayV2 {
+		channelLabel = "V2"
+	}
 	var out []payOption
 	for _, payType := range payTypes {
 		normalized, ok := normalizeEpayPayType(payType, "")
@@ -105,7 +140,14 @@ func epayPayTypeOptions(payTypes []string) []payOption {
 		if !ok {
 			m = meta{label: normalized, icon: "ri:bank-card-line", color: "#666666"}
 		}
-		out = append(out, payOption{Code: normalized, Label: m.label, Icon: m.icon, Color: m.color})
+		out = append(out, payOption{
+			Code:    channel + ":" + normalized,
+			Channel: channel,
+			PayType: normalized,
+			Label:   m.label + " · " + channelLabel,
+			Icon:    m.icon,
+			Color:   m.color,
+		})
 	}
 	return out
 }
@@ -126,10 +168,10 @@ func dedupePayOptions(options []payOption) []payOption {
 func configuredOnlinePayOptions(db *sql.DB) []payOption {
 	options := []payOption{}
 	if cfg, err := loadEpayConfig(db); err == nil && cfg.validateForPay() == nil {
-		options = append(options, epayPayTypeOptions(cfg.PayTypes)...)
+		options = append(options, epayPayTypeOptions(payChannelEpayV1, cfg.PayTypes)...)
 	}
 	if cfg, err := loadEpayV2Config(db); err == nil && cfg.validateForPay() == nil {
-		options = append(options, epayPayTypeOptions(cfg.PayTypes)...)
+		options = append(options, epayPayTypeOptions(payChannelEpayV2, cfg.PayTypes)...)
 	}
 	return dedupePayOptions(options)
 }
@@ -339,15 +381,21 @@ func userPurchaseOnline(c *gin.Context, appID int64, planID int64, licenseType s
 	orderName := fmt.Sprintf("购买授权 %s - %s", appName, planName)
 	orderNo := generateUserPurchaseOrderNo()
 	ownerID := int64(userID)
+	selection, ok := parseOnlinePaySelection(payType)
+	if !ok {
+		c.JSON(http.StatusOK, gin.H{"code": 400, "msg": "不支持的支付方式"})
+		return
+	}
+	payType = selection.PayType
 
 	payConfig, err := loadEpayConfig(db)
-	if err == nil && payConfig.validateForPay() == nil && payConfig.isPayTypeEnabled(payType) {
+	if (selection.Channel == "" || selection.Channel == payChannelEpayV1) && err == nil && payConfig.validateForPay() == nil && payConfig.isPayTypeEnabled(payType) {
 		payURL, frontendReturnURL, err := buildEpaySubmitURL(c, payConfig, orderNo, amountCents, payType, orderName, "/user/purchase")
 		if err != nil {
 			c.JSON(http.StatusOK, gin.H{"code": 400, "msg": err.Error()})
 			return
 		}
-		if err := insertAllowedLicensePurchaseOrder(db, orderNo, 0, "user", ownerID, licenseType, domain, plan, quote, payType, frontendReturnURL); err != nil {
+		if err := insertAllowedLicensePurchaseOrder(db, orderNo, 0, "user", ownerID, licenseType, domain, plan, quote, payChannelEpayV1, payType, frontendReturnURL); err != nil {
 			if err == errPurchaseTypeNotAllowed {
 				c.JSON(http.StatusOK, gin.H{"code": 400, "msg": purchaseLicenseTypeNotAllowedMessage(licenseType)})
 			} else if err == sql.ErrNoRows {
@@ -366,9 +414,9 @@ func userPurchaseOnline(c *gin.Context, appID int64, planID int64, licenseType s
 	}
 
 	payConfigV2, err := loadEpayV2Config(db)
-	if err == nil && payConfigV2.validateForPay() == nil && payConfigV2.isPayTypeEnabled(payType) {
+	if (selection.Channel == "" || selection.Channel == payChannelEpayV2) && err == nil && payConfigV2.validateForPay() == nil && payConfigV2.isPayTypeEnabled(payType) {
 		frontendReturnURL := buildFrontendReturnURL(c, orderNo, "/user/purchase")
-		if err := insertAllowedLicensePurchaseOrder(db, orderNo, 0, "user", ownerID, licenseType, domain, plan, quote, payType, frontendReturnURL); err != nil {
+		if err := insertAllowedLicensePurchaseOrder(db, orderNo, 0, "user", ownerID, licenseType, domain, plan, quote, payChannelEpayV2, payType, frontendReturnURL); err != nil {
 			if err == errPurchaseTypeNotAllowed {
 				c.JSON(http.StatusOK, gin.H{"code": 400, "msg": purchaseLicenseTypeNotAllowedMessage(licenseType)})
 			} else if err == sql.ErrNoRows {
@@ -460,15 +508,21 @@ func agentPanelPurchaseOnline(c *gin.Context, appID int64, planID int64, userID 
 
 	orderName := fmt.Sprintf("开通授权 %s - %s", appName, planName)
 	orderNo := generateLicensePurchaseOrderNo()
+	selection, ok := parseOnlinePaySelection(payType)
+	if !ok {
+		c.JSON(http.StatusOK, gin.H{"code": 400, "msg": "不支持的支付方式"})
+		return
+	}
+	payType = selection.PayType
 
 	payConfig, err := loadEpayConfig(db)
-	if err == nil && payConfig.validateForPay() == nil && payConfig.isPayTypeEnabled(payType) {
+	if (selection.Channel == "" || selection.Channel == payChannelEpayV1) && err == nil && payConfig.validateForPay() == nil && payConfig.isPayTypeEnabled(payType) {
 		payURL, frontendReturnURL, err := buildEpaySubmitURL(c, payConfig, orderNo, amountCents, payType, orderName, "/agent/purchase")
 		if err != nil {
 			c.JSON(http.StatusOK, gin.H{"code": 400, "msg": err.Error()})
 			return
 		}
-		if err := insertAllowedLicensePurchaseOrder(db, orderNo, agentID, ownerType, ownerID, licenseType, domain, plan, quote, payType, frontendReturnURL); err != nil {
+		if err := insertAllowedLicensePurchaseOrder(db, orderNo, agentID, ownerType, ownerID, licenseType, domain, plan, quote, payChannelEpayV1, payType, frontendReturnURL); err != nil {
 			if err == errPurchaseTypeNotAllowed {
 				c.JSON(http.StatusOK, gin.H{"code": 400, "msg": purchaseLicenseTypeNotAllowedMessage(licenseType)})
 			} else if err == sql.ErrNoRows {
@@ -487,9 +541,9 @@ func agentPanelPurchaseOnline(c *gin.Context, appID int64, planID int64, userID 
 	}
 
 	payConfigV2, err := loadEpayV2Config(db)
-	if err == nil && payConfigV2.validateForPay() == nil && payConfigV2.isPayTypeEnabled(payType) {
+	if (selection.Channel == "" || selection.Channel == payChannelEpayV2) && err == nil && payConfigV2.validateForPay() == nil && payConfigV2.isPayTypeEnabled(payType) {
 		frontendReturnURL := buildFrontendReturnURL(c, orderNo, "/agent/purchase")
-		if err := insertAllowedLicensePurchaseOrder(db, orderNo, agentID, ownerType, ownerID, licenseType, domain, plan, quote, payType, frontendReturnURL); err != nil {
+		if err := insertAllowedLicensePurchaseOrder(db, orderNo, agentID, ownerType, ownerID, licenseType, domain, plan, quote, payChannelEpayV2, payType, frontendReturnURL); err != nil {
 			if err == errPurchaseTypeNotAllowed {
 				c.JSON(http.StatusOK, gin.H{"code": 400, "msg": purchaseLicenseTypeNotAllowedMessage(licenseType)})
 			} else if err == sql.ErrNoRows {
@@ -516,7 +570,7 @@ func agentPanelPurchaseOnline(c *gin.Context, appID int64, planID int64, userID 
 	c.JSON(http.StatusOK, gin.H{"code": 400, "msg": "该支付方式未开启"})
 }
 
-func insertAllowedLicensePurchaseOrder(db *sql.DB, orderNo string, agentID uint, ownerType string, ownerID int64, licenseType string, domain string, plan purchasePlanPricing, quote purchasePriceQuote, payType string, returnURL string) error {
+func insertAllowedLicensePurchaseOrder(db *sql.DB, orderNo string, agentID uint, ownerType string, ownerID int64, licenseType string, domain string, plan purchasePlanPricing, quote purchasePriceQuote, payChannel string, payType string, returnURL string) error {
 	tx, err := db.Begin()
 	if err != nil {
 		return err
@@ -545,12 +599,12 @@ func insertAllowedLicensePurchaseOrder(db *sql.DB, orderNo string, agentID uint,
 			promotion_id, promotion_name, promotion_rule_snapshot, pricing_snapshot,
 			app_name_snapshot, plan_name_snapshot, duration_days_snapshot,
 			pay_channel, pay_method, status, return_url, remark
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'easypay', ?, 'pending', ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
 	`, orderNo, agentID, uid, plan.AppID, plan.PlanID, ownerType, ownerID, licenseType, domain,
 		snapshot.Amount, snapshot.OriginalAmount, snapshot.BaseAmount, snapshot.DiscountAmount,
 		snapshot.PromotionID, snapshot.PromotionName, snapshot.PromotionRule, snapshot.PricingSnapshot,
 		snapshot.AppName, snapshot.PlanName, snapshot.DurationDays,
-		payType, returnURL, orderRemark); err != nil {
+		payChannel, payType, returnURL, orderRemark); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -558,7 +612,13 @@ func insertAllowedLicensePurchaseOrder(db *sql.DB, orderNo string, agentID uint,
 
 // settleLicensePurchaseOrder 支付回调验签通过后生成授权并标记订单已支付。
 // 在事务内行锁订单，幂等：重复回调直接返回成功。
-func settleLicensePurchaseOrder(db *sql.DB, orderNo string, paidCents int64, gatewayTradeNo string, payMethod string, notifyPayload string) error {
+func settleLicensePurchaseOrder(db *sql.DB, orderNo string, paidCents int64, payChannel string, gatewayTradeNo string, payMethod string, notifyPayload string) error {
+	payChannel = strings.TrimSpace(payChannel)
+	gatewayTradeNo = strings.TrimSpace(gatewayTradeNo)
+	payMethod = strings.TrimSpace(payMethod)
+	if orderNo == "" || paidCents <= 0 || payChannel == "" || gatewayTradeNo == "" || payMethod == "" {
+		return errors.New("购买订单支付回调参数不完整")
+	}
 	if err := ensureLicensePurchaseOrderSchema(db); err != nil {
 		return err
 	}
@@ -584,16 +644,21 @@ func settleLicensePurchaseOrder(db *sql.DB, orderNo string, paidCents int64, gat
 		appNameSnapshot  sql.NullString
 		planNameSnapshot sql.NullString
 		durationSnapshot sql.NullInt64
+		expectedChannel  string
+		expectedMethod   string
+		currentTradeNo   string
 	)
 	err = tx.QueryRow(`
 		SELECT id, agent_id, owner_type, owner_id, app_id, plan_id, type, COALESCE(target, ''),
 		       amount, COALESCE(original_amount, amount), status,
-		       app_name_snapshot, plan_name_snapshot, duration_days_snapshot
+		       app_name_snapshot, plan_name_snapshot, duration_days_snapshot,
+		       COALESCE(pay_channel, ''), COALESCE(pay_method, ''), COALESCE(gateway_trade_no, '')
 		FROM license_purchase_orders
 		WHERE order_no = ?
 		FOR UPDATE
 	`, orderNo).Scan(&id, &agentID, &ownerType, &ownerID, &appID, &planID, &licenseType, &target,
-		&amountText, &originalPrice, &status, &appNameSnapshot, &planNameSnapshot, &durationSnapshot)
+		&amountText, &originalPrice, &status, &appNameSnapshot, &planNameSnapshot, &durationSnapshot,
+		&expectedChannel, &expectedMethod, &currentTradeNo)
 	if err != nil {
 		return err
 	}
@@ -601,6 +666,15 @@ func settleLicensePurchaseOrder(db *sql.DB, orderNo string, paidCents int64, gat
 	expectedCents, err := parseAmountToCents(amountText)
 	if err != nil || expectedCents != paidCents {
 		return fmt.Errorf("购买订单金额不一致")
+	}
+	if expectedChannel != "" && expectedChannel != payChannel {
+		return fmt.Errorf("购买订单支付通道不一致")
+	}
+	if expectedMethod != "" && expectedMethod != payMethod {
+		return fmt.Errorf("购买订单支付方式不一致")
+	}
+	if currentTradeNo != "" && currentTradeNo != gatewayTradeNo {
+		return fmt.Errorf("购买订单支付流水不一致")
 	}
 	if status == "paid" {
 		return tx.Commit()
@@ -668,9 +742,6 @@ func settleLicensePurchaseOrder(db *sql.DB, orderNo string, paidCents int64, gat
 		}
 	}
 
-	if payMethod == "" {
-		payMethod = "easypay"
-	}
 	_, err = tx.Exec(`
 		UPDATE license_purchase_orders
 		SET status = 'paid', paid_at = NOW(), paid_amount = ?, gateway_trade_no = ?, pay_method = ?, license_id = ?, license_no = ?, notify_payload = ?

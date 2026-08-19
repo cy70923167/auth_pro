@@ -141,7 +141,7 @@ func AgentPanelFinanceTransactions(c *gin.Context) {
 	switch txType {
 	case "consume", "purchase":
 		where = append(where, "t.type IN ('consume', 'purchase')")
-	case "recharge", "refund":
+	case "recharge", "refund", "transfer", "bonus":
 		where = append(where, "t.type = ?")
 		args = append(args, txType)
 	}
@@ -178,7 +178,10 @@ func AgentPanelFinanceTransactions(c *gin.Context) {
 	}
 	defer rows.Close()
 
-	typeLabels := map[string]string{"recharge": "充值", "consume": "消费", "purchase": "消费", "refund": "退款"}
+	typeLabels := map[string]string{
+		"recharge": "充值", "consume": "消费", "purchase": "消费", "refund": "退款",
+		"transfer": "账户迁移", "bonus": "开通赠送",
+	}
 	type txItem struct {
 		ID           int64   `json:"id"`
 		OrderNo      string  `json:"orderNo"`

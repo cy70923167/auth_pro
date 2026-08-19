@@ -31,6 +31,16 @@ export const agentRoutes: AppRouteRecord = {
       }
     },
     {
+      path: 'upgrade',
+      name: 'AgentUpgrade',
+      component: '/agent/upgrade',
+      meta: {
+        title: '升级审计',
+        icon: 'ri:user-shared-line',
+        keepAlive: true
+      }
+    },
+    {
       path: 'recharge',
       name: 'AgentRecharge',
       component: '/agent/recharge',

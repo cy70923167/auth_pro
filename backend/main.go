@@ -125,7 +125,7 @@ func main() {
 
 		// 用户端（需鉴权）
 		userSecured := api.Group("/user-panel")
-		userSecured.Use(middleware.JWTAuth())
+		userSecured.Use(middleware.JWTAuth(), middleware.RequireActiveUser())
 		{
 			userSecured.GET("/dashboard", handler.UserDashboard)
 			userSecured.GET("/licenses", handler.UserLicenseList)
@@ -143,6 +143,10 @@ func main() {
 			userSecured.GET("/purchase/pay-options", handler.UserPurchasePayOptions)
 			userSecured.POST("/purchase", handler.UserPurchase)
 			userSecured.GET("/purchase/orders/:orderNo", handler.UserPurchaseOrderStatus)
+			userSecured.GET("/agent-upgrade/levels", handler.UserAgentUpgradeLevels)
+			userSecured.POST("/agent-upgrade/orders", handler.UserAgentUpgradeCreate)
+			userSecured.GET("/agent-upgrade/orders/:orderNo", handler.UserAgentUpgradeOrderStatus)
+			userSecured.DELETE("/agent-upgrade/orders/:orderNo", handler.UserAgentUpgradeCancel)
 			userSecured.GET("/profile", handler.UserProfile)
 			userSecured.PUT("/profile", handler.UserUpdateProfile)
 			userSecured.POST("/change-password", handler.UserChangePassword)
@@ -255,6 +259,10 @@ func main() {
 			secured.POST("/agent-level/create", handler.AgentLevelCreate)
 			secured.PUT("/agent-level/:id", handler.AgentLevelUpdate)
 			secured.DELETE("/agent-level/:id", handler.AgentLevelDelete)
+			secured.GET("/agent-upgrade/stats", handler.AdminAgentUpgradeStats)
+			secured.GET("/agent-upgrade/orders", handler.AdminAgentUpgradeOrderList)
+			secured.GET("/agent-upgrade/conversions", handler.AdminAccountConversionList)
+			secured.GET("/agent-upgrade/conversions/:id", handler.AdminAccountConversionDetail)
 			secured.GET("/transaction/list", handler.TransactionList)
 			secured.GET("/transaction/stats", handler.TransactionStats)
 			secured.GET("/quota/list", handler.QuotaList)
@@ -357,7 +365,7 @@ func main() {
 	handler.StartMailReminderWorker()
 
 	// 兜底迁移：补齐购买订单字段，修正历史线上购买流水与价格快照
-	go func() {
+	func() {
 		cfg, err := config.LoadDBConfig()
 		if err != nil {
 			return
@@ -378,6 +386,9 @@ func main() {
 		}
 		if err := handler.EnsureLicensePurchasePriceSnapshotSchema(db); err != nil {
 			log.Printf("ensure license purchase price snapshots failed: %v", err)
+		}
+		if err := handler.EnsureAccountUpgradeSchema(db); err != nil {
+			log.Printf("ensure account upgrade schema failed: %v", err)
 		}
 		handler.BackfillLicensePurchaseTransactions(db)
 	}()

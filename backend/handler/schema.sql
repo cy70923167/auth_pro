@@ -90,42 +90,52 @@ CREATE TABLE `role_apps` (
 
 DROP TABLE IF EXISTS `agent_levels`;
 CREATE TABLE `agent_levels` (
-  `id`         BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '主键ID',
-  `code`       VARCHAR(50) NOT NULL COMMENT '等级编码',
-  `name`       VARCHAR(50) NOT NULL COMMENT '等级名称',
-  `discount`   DECIMAL(3,1) NOT NULL DEFAULT 9.0 COMMENT '折扣(1-10)',
-  `sort`       INT DEFAULT 0 COMMENT '排序',
-  `enabled`    TINYINT(1) DEFAULT 1 COMMENT '是否启用',
-  `remark`     VARCHAR(255) DEFAULT '' COMMENT '备注',
-  `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-  `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  `id`                   BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+  `code`                 VARCHAR(50) NOT NULL COMMENT '等级编码',
+  `name`                 VARCHAR(50) NOT NULL COMMENT '等级名称',
+  `discount`             DECIMAL(3,1) NOT NULL DEFAULT 9.0 COMMENT '折扣(1-10)',
+  `self_service_enabled` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否允许用户自助开通',
+  `upgrade_price`        DECIMAL(12,2) NOT NULL DEFAULT 0.00 COMMENT '用户自助开通价格',
+  `opening_bonus`        DECIMAL(12,2) NOT NULL DEFAULT 0.00 COMMENT '自助开通赠送余额',
+  `benefits`             TEXT COMMENT '等级权益说明',
+  `sort`                 INT DEFAULT 0 COMMENT '排序',
+  `enabled`              TINYINT(1) DEFAULT 1 COMMENT '是否启用',
+  `remark`               VARCHAR(255) DEFAULT '' COMMENT '备注',
+  `created_at`           DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  `updated_at`           DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
   PRIMARY KEY (`id`),
-  UNIQUE KEY `uk_agent_level_code` (`code`)
+  UNIQUE KEY `uk_agent_level_code` (`code`),
+  KEY `idx_agent_level_self_service` (`self_service_enabled`, `enabled`, `sort`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='代理商等级表';
 
-INSERT INTO `agent_levels` (`code`, `name`, `discount`, `sort`, `enabled`, `remark`) VALUES
-('gold', '金牌代理', 7.0, 1, 1, '默认金牌等级'),
-('silver', '银牌代理', 8.0, 2, 1, '默认银牌等级'),
-('bronze', '铜牌代理', 9.0, 3, 1, '默认铜牌等级');
+INSERT INTO `agent_levels` (`code`, `name`, `discount`, `self_service_enabled`, `upgrade_price`, `sort`, `enabled`, `remark`) VALUES
+('gold', '金牌代理', 7.0, 0, 0.00, 1, 1, '默认金牌等级'),
+('silver', '银牌代理', 8.0, 0, 0.00, 2, 1, '默认银牌等级'),
+('bronze', '铜牌代理', 9.0, 0, 0.00, 3, 1, '默认铜牌等级');
 
 DROP TABLE IF EXISTS `agents`;
 CREATE TABLE `agents` (
-  `id`            BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '主键ID',
-  `email`         VARCHAR(100) NOT NULL COMMENT '登录邮箱',
-  `password_hash` VARCHAR(255) NOT NULL COMMENT '密码哈希(bcrypt)',
-  `name`          VARCHAR(50)  DEFAULT '' COMMENT '代理商名称',
-  `contact`       VARCHAR(100) DEFAULT '' COMMENT '联系方式',
-  `level`         VARCHAR(50) DEFAULT 'bronze' COMMENT '等级编码',
-  `discount`      DECIMAL(3,1) DEFAULT 9.0 COMMENT '折扣(1-10)',
-  `balance`       DECIMAL(12,2) DEFAULT 0.00 COMMENT '账户余额',
-  `remark`        VARCHAR(255) DEFAULT '' COMMENT '备注',
-  `enabled`       TINYINT(1)   DEFAULT 1 COMMENT '是否启用',
-  `last_login_at` DATETIME     DEFAULT NULL COMMENT '最后登录时间',
-  `last_login_ip` VARCHAR(45)  DEFAULT '' COMMENT '最后登录IP',
-  `created_at`    DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-  `updated_at`    DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  `id`               BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+  `email`            VARCHAR(100) NOT NULL COMMENT '登录邮箱',
+  `password_hash`    VARCHAR(255) NOT NULL COMMENT '密码哈希(bcrypt)',
+  `name`             VARCHAR(50)  DEFAULT '' COMMENT '代理商名称',
+  `contact`          VARCHAR(100) DEFAULT '' COMMENT '联系方式',
+  `level`            VARCHAR(50) DEFAULT 'bronze' COMMENT '等级编码',
+  `discount`         DECIMAL(3,1) DEFAULT 9.0 COMMENT '折扣(1-10)',
+  `balance`          DECIMAL(12,2) DEFAULT 0.00 COMMENT '账户余额',
+  `source`           ENUM('admin','user_upgrade') NOT NULL DEFAULT 'admin' COMMENT '账户来源',
+  `original_user_id` BIGINT UNSIGNED DEFAULT NULL COMMENT '升级前用户ID',
+  `converted_at`     DATETIME DEFAULT NULL COMMENT '账户转换完成时间',
+  `remark`           VARCHAR(255) DEFAULT '' COMMENT '备注',
+  `enabled`          TINYINT(1)   DEFAULT 1 COMMENT '是否启用',
+  `last_login_at`    DATETIME     DEFAULT NULL COMMENT '最后登录时间',
+  `last_login_ip`    VARCHAR(45)  DEFAULT '' COMMENT '最后登录IP',
+  `created_at`       DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  `updated_at`       DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
   PRIMARY KEY (`id`),
-  UNIQUE KEY `uk_email` (`email`)
+  UNIQUE KEY `uk_email` (`email`),
+  UNIQUE KEY `uk_agent_original_user` (`original_user_id`),
+  KEY `idx_agent_source` (`source`, `created_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='代理商表';
 
 DROP TABLE IF EXISTS `agent_quotas`;
@@ -143,20 +153,25 @@ CREATE TABLE `agent_quotas` (
 
 DROP TABLE IF EXISTS `users`;
 CREATE TABLE `users` (
-  `id`            BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '主键ID',
-  `email`         VARCHAR(100) NOT NULL COMMENT '登录邮箱',
-  `phone`         VARCHAR(20)  DEFAULT NULL COMMENT '手机号',
-  `password_hash` VARCHAR(255) NOT NULL COMMENT '密码哈希(bcrypt)',
-  `nickname`      VARCHAR(50)  DEFAULT '' COMMENT '显示昵称',
-  `balance`       DECIMAL(12,2) DEFAULT 0.00 COMMENT '账户余额',
-  `enabled`       TINYINT(1)   DEFAULT 1 COMMENT '是否启用',
-  `last_login_at` DATETIME     DEFAULT NULL COMMENT '最后登录时间',
-  `last_login_ip` VARCHAR(45)  DEFAULT '' COMMENT '最后登录IP',
-  `created_at`    DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-  `updated_at`    DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  `id`                 BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+  `email`              VARCHAR(100) NOT NULL COMMENT '登录邮箱',
+  `phone`              VARCHAR(20)  DEFAULT NULL COMMENT '手机号',
+  `password_hash`      VARCHAR(255) NOT NULL COMMENT '密码哈希(bcrypt)',
+  `nickname`           VARCHAR(50)  DEFAULT '' COMMENT '显示昵称',
+  `balance`            DECIMAL(12,2) DEFAULT 0.00 COMMENT '账户余额',
+  `account_status`     ENUM('active','converted') NOT NULL DEFAULT 'active' COMMENT '账户主体状态',
+  `converted_agent_id` BIGINT UNSIGNED DEFAULT NULL COMMENT '转换后的代理ID',
+  `converted_at`       DATETIME DEFAULT NULL COMMENT '账户转换时间',
+  `enabled`            TINYINT(1)   DEFAULT 1 COMMENT '是否启用',
+  `last_login_at`      DATETIME     DEFAULT NULL COMMENT '最后登录时间',
+  `last_login_ip`      VARCHAR(45)  DEFAULT '' COMMENT '最后登录IP',
+  `created_at`         DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  `updated_at`         DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_email` (`email`),
-  UNIQUE KEY `uk_phone` (`phone`)
+  UNIQUE KEY `uk_phone` (`phone`),
+  UNIQUE KEY `uk_user_converted_agent` (`converted_agent_id`),
+  KEY `idx_user_account_status` (`account_status`, `enabled`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='终端用户表';
 
 DROP TABLE IF EXISTS `user_password_resets`;
@@ -387,13 +402,72 @@ CREATE TABLE `piracy_blacklist` (
   UNIQUE KEY `uk_app_type_value` (`app_id`, `type`, `value`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='黑名单表';
 
+DROP TABLE IF EXISTS `agent_upgrade_orders`;
+CREATE TABLE `agent_upgrade_orders` (
+  `id`                     BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+  `order_no`               VARCHAR(64) NOT NULL COMMENT '升级订单号',
+  `user_id`                BIGINT UNSIGNED NOT NULL COMMENT '发起升级的用户ID',
+  `level_id`               BIGINT UNSIGNED NOT NULL COMMENT '目标代理等级ID',
+  `level_code_snapshot`    VARCHAR(50) NOT NULL COMMENT '等级编码快照',
+  `level_name_snapshot`    VARCHAR(50) NOT NULL COMMENT '等级名称快照',
+  `discount_snapshot`      DECIMAL(3,1) NOT NULL COMMENT '代理折扣快照',
+  `opening_bonus_snapshot` DECIMAL(12,2) NOT NULL DEFAULT 0.00 COMMENT '开通赠送余额快照',
+  `amount`                 DECIMAL(12,2) NOT NULL COMMENT '应付开通费',
+  `paid_amount`            DECIMAL(12,2) DEFAULT NULL COMMENT '实际支付金额',
+  `pay_channel`            VARCHAR(30) NOT NULL DEFAULT '' COMMENT '支付渠道(balance/easypay/easypay-v2)',
+  `pay_method`             VARCHAR(30) NOT NULL DEFAULT '' COMMENT '支付方式',
+  `gateway_trade_no`       VARCHAR(100) DEFAULT NULL COMMENT '支付网关交易号',
+  `return_url`             VARCHAR(500) NOT NULL DEFAULT '' COMMENT '支付完成前端返回地址',
+  `status`                 ENUM('pending','paid','processing','completed','failed','cancelled') NOT NULL DEFAULT 'pending' COMMENT '订单状态',
+  `agent_id`               BIGINT UNSIGNED DEFAULT NULL COMMENT '转换后的代理ID',
+  `paid_at`                DATETIME DEFAULT NULL COMMENT '支付完成时间',
+  `completed_at`           DATETIME DEFAULT NULL COMMENT '转换完成时间',
+  `error_message`          TEXT COMMENT '最近一次失败原因',
+  `notify_payload`         TEXT COMMENT '支付回调原始参数',
+  `created_at`             DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  `updated_at`             DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_agent_upgrade_order_no` (`order_no`),
+  KEY `idx_agent_upgrade_user_status` (`user_id`, `status`, `created_at`),
+  UNIQUE KEY `uk_agent_upgrade_gateway_trade` (`gateway_trade_no`),
+  KEY `idx_agent_upgrade_status` (`status`, `updated_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户自助开通代理订单表';
+
+DROP TABLE IF EXISTS `account_conversions`;
+CREATE TABLE `account_conversions` (
+  `id`                     BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+  `conversion_no`          VARCHAR(64) NOT NULL COMMENT '转换流水号',
+  `upgrade_order_id`       BIGINT UNSIGNED NOT NULL COMMENT '升级订单ID',
+  `user_id`                BIGINT UNSIGNED NOT NULL COMMENT '原用户ID',
+  `agent_id`               BIGINT UNSIGNED DEFAULT NULL COMMENT '新代理ID',
+  `level_id`               BIGINT UNSIGNED NOT NULL COMMENT '代理等级ID',
+  `status`                 ENUM('processing','completed','failed') NOT NULL DEFAULT 'processing' COMMENT '转换状态',
+  `opening_fee`            DECIMAL(12,2) NOT NULL DEFAULT 0.00 COMMENT '开通费',
+  `transferred_balance`    DECIMAL(12,2) NOT NULL DEFAULT 0.00 COMMENT '迁移余额',
+  `opening_bonus`          DECIMAL(12,2) NOT NULL DEFAULT 0.00 COMMENT '开通赠送余额',
+  `migrated_license_count` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT '迁移授权数',
+  `source_snapshot`        JSON DEFAULT NULL COMMENT '原用户关键资料快照',
+  `result_snapshot`        JSON DEFAULT NULL COMMENT '转换结果快照',
+  `error_message`          TEXT COMMENT '失败原因',
+  `started_at`             DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '开始时间',
+  `completed_at`           DATETIME DEFAULT NULL COMMENT '完成时间',
+  `created_at`             DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  `updated_at`             DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_account_conversion_no` (`conversion_no`),
+  UNIQUE KEY `uk_account_conversion_order` (`upgrade_order_id`),
+  UNIQUE KEY `uk_account_conversion_user` (`user_id`),
+  UNIQUE KEY `uk_account_conversion_agent` (`agent_id`),
+  KEY `idx_account_conversion_status` (`status`, `updated_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户转代理审计表';
+
 DROP TABLE IF EXISTS `transactions`;
 CREATE TABLE `transactions` (
   `id`            BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '主键ID',
   `tx_no`         VARCHAR(64) NOT NULL COMMENT '流水号',
   `subject_type`  ENUM('agent','user') NOT NULL COMMENT '主体类型',
   `subject_id`    BIGINT UNSIGNED NOT NULL COMMENT '主体ID',
-  `type`          ENUM('recharge','consume','refund','purchase') NOT NULL COMMENT '类型',
+  `type`          ENUM('recharge','consume','refund','purchase','transfer','bonus') NOT NULL COMMENT '类型',
   `amount`        DECIMAL(12,2) NOT NULL COMMENT '金额',
   `balance_after` DECIMAL(12,2) DEFAULT NULL COMMENT '交易后余额',
   `ref_type`      VARCHAR(50)  DEFAULT '' COMMENT '关联对象类型',

@@ -64,6 +64,7 @@ func GetMenuList(c *gin.Context) {
 	defer db.Close()
 	ensureUserManageMenu(db)
 	ensureAgentLevelMenu(db)
+	ensureAgentUpgradeMenu(db)
 	ensureSystemConfigMenu(db)
 	ensureEpayConfigMenu(db)
 	ensurePaymentOrdersMenu(db)
@@ -418,6 +419,30 @@ func ensureAgentLevelMenu(db *sql.DB) {
 	_, _ = db.Exec(`
 		INSERT IGNORE INTO role_menus (role_id, menu_id)
 		SELECT id, ? FROM roles WHERE enabled = 1
+	`, menuID)
+}
+
+func ensureAgentUpgradeMenu(db *sql.DB) {
+	var parentID int64
+	if err := db.QueryRow("SELECT id FROM menus WHERE name = 'Agent' LIMIT 1").Scan(&parentID); err != nil || parentID == 0 {
+		return
+	}
+
+	_, _ = db.Exec(`
+		INSERT INTO menus (parent_id, name, path, component, title, icon, sort, keep_alive, enabled)
+		VALUES (?, 'AgentUpgrade', 'upgrade', '/agent/upgrade', '升级审计', 'ri:user-shared-line', 3, 1, 1)
+		ON DUPLICATE KEY UPDATE parent_id = VALUES(parent_id), path = VALUES(path), component = VALUES(component),
+			title = VALUES(title), icon = VALUES(icon), sort = VALUES(sort), keep_alive = VALUES(keep_alive), enabled = 1
+	`, parentID)
+
+	var menuID int64
+	if err := db.QueryRow("SELECT id FROM menus WHERE name = 'AgentUpgrade' LIMIT 1").Scan(&menuID); err != nil || menuID == 0 {
+		return
+	}
+
+	_, _ = db.Exec(`
+		INSERT IGNORE INTO role_menus (role_id, menu_id)
+		SELECT id, ? FROM roles WHERE role_code IN ('R_SUPER', 'R_ADMIN') AND enabled = 1
 	`, menuID)
 }
 

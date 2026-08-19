@@ -24,14 +24,15 @@ func AgentList(c *gin.Context) {
 		return
 	}
 	defer db.Close()
-	if err := ensureAgentLevelSchema(db); err != nil {
-		c.JSON(http.StatusOK, gin.H{"code": 500, "msg": "代理商等级表初始化失败: " + err.Error()})
+	if err := EnsureAccountUpgradeSchema(db); err != nil {
+		c.JSON(http.StatusOK, gin.H{"code": 500, "msg": "代理商账户结构初始化失败: " + err.Error()})
 		return
 	}
 
 	keyword := c.Query("keyword")
 	level := c.Query("level")
 	status := c.Query("status")
+	source := c.Query("source")
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	pageSize, _ := strconv.Atoi(c.DefaultQuery("pageSize", "10"))
 	if page < 1 {
@@ -59,6 +60,10 @@ func AgentList(c *gin.Context) {
 			where = append(where, "a.enabled = 0")
 		}
 	}
+	if source == "admin" || source == "user_upgrade" {
+		where = append(where, "a.source = ?")
+		args = append(args, source)
+	}
 
 	whereSQL := strings.Join(where, " AND ")
 
@@ -75,9 +80,13 @@ func AgentList(c *gin.Context) {
 		         ELSE 10
 		       END AS discount,
 		       a.balance, a.remark, a.enabled, a.created_at,
+		       a.source, a.original_user_id, a.converted_at,
+		       COALESCE(c.conversion_no, ''), CAST(c.transferred_balance AS CHAR),
+		       COALESCE(c.migrated_license_count, 0),
 		       (SELECT COUNT(*) FROM licenses l WHERE l.owner_type = 'agent' AND l.owner_id = a.id) as total_licenses
 		FROM agents a
 		LEFT JOIN agent_levels al ON al.code = a.level
+		LEFT JOIN account_conversions c ON c.agent_id = a.id
 		WHERE %s
 		ORDER BY a.created_at DESC
 		LIMIT ? OFFSET ?
@@ -92,18 +101,25 @@ func AgentList(c *gin.Context) {
 	defer rows.Close()
 
 	type agentItem struct {
-		ID            int64   `json:"id"`
-		Name          string  `json:"name"`
-		Contact       string  `json:"contact"`
-		Level         string  `json:"level"`
-		LevelLabel    string  `json:"levelLabel"`
-		Discount      float64 `json:"discount"`
-		Balance       float64 `json:"balance"`
-		Remark        string  `json:"remark"`
-		Status        string  `json:"status"`
-		StatusLabel   string  `json:"statusLabel"`
-		TotalLicenses int64   `json:"totalLicenses"`
-		CreatedAt     string  `json:"createdAt"`
+		ID                   int64   `json:"id"`
+		Name                 string  `json:"name"`
+		Contact              string  `json:"contact"`
+		Level                string  `json:"level"`
+		LevelLabel           string  `json:"levelLabel"`
+		Discount             float64 `json:"discount"`
+		Balance              float64 `json:"balance"`
+		Remark               string  `json:"remark"`
+		Status               string  `json:"status"`
+		StatusLabel          string  `json:"statusLabel"`
+		Source               string  `json:"source"`
+		SourceLabel          string  `json:"sourceLabel"`
+		OriginalUserID       *int64  `json:"originalUserId"`
+		ConvertedAt          string  `json:"convertedAt"`
+		ConversionNo         string  `json:"conversionNo"`
+		TransferredBalance   float64 `json:"transferredBalance"`
+		MigratedLicenseCount int64   `json:"migratedLicenseCount"`
+		TotalLicenses        int64   `json:"totalLicenses"`
+		CreatedAt            string  `json:"createdAt"`
 	}
 
 	var list []agentItem
@@ -111,14 +127,33 @@ func AgentList(c *gin.Context) {
 		var item agentItem
 		var enabled bool
 		var createdAt time.Time
+		var convertedAt sql.NullTime
+		var originalUserID sql.NullInt64
+		var transferredBalance sql.NullString
 		var remark sql.NullString
 		err := rows.Scan(&item.ID, &item.Name, &item.Contact, &item.Level, &item.LevelLabel, &item.Discount,
-			&item.Balance, &remark, &enabled, &createdAt, &item.TotalLicenses)
+			&item.Balance, &remark, &enabled, &createdAt, &item.Source, &originalUserID, &convertedAt,
+			&item.ConversionNo, &transferredBalance, &item.MigratedLicenseCount, &item.TotalLicenses)
 		if err != nil {
 			continue
 		}
 		if remark.Valid {
 			item.Remark = remark.String
+		}
+		if originalUserID.Valid {
+			value := originalUserID.Int64
+			item.OriginalUserID = &value
+		}
+		if convertedAt.Valid {
+			item.ConvertedAt = convertedAt.Time.Format("2006-01-02 15:04")
+		}
+		if transferredBalance.Valid {
+			item.TransferredBalance = adminAmountValue(transferredBalance.String)
+		}
+		if item.Source == "user_upgrade" {
+			item.SourceLabel = "用户自助升级"
+		} else {
+			item.SourceLabel = "后台创建"
 		}
 		if enabled {
 			item.Status = "active"
@@ -359,6 +394,10 @@ func rechargeAgentManually(db *sql.DB, agentID uint64, amountCents int64, remark
 	return tx.Commit()
 }
 
+func agentDeletionProtected(source string, originalUserID sql.NullInt64) bool {
+	return source == "user_upgrade" || originalUserID.Valid
+}
+
 // AgentDelete 删除代理商
 func AgentDelete(c *gin.Context) {
 	id := c.Param("id")
@@ -370,6 +409,17 @@ func AgentDelete(c *gin.Context) {
 		return
 	}
 	defer db.Close()
+
+	var source string
+	var originalUserID sql.NullInt64
+	if err := db.QueryRow("SELECT source, original_user_id FROM agents WHERE id = ?", id).Scan(&source, &originalUserID); err != nil {
+		c.JSON(http.StatusOK, gin.H{"code": 404, "msg": "代理商不存在"})
+		return
+	}
+	if agentDeletionProtected(source, originalUserID) {
+		c.JSON(http.StatusOK, gin.H{"code": 400, "msg": "用户升级产生的代理账户需要保留审计关联，不能删除；如需停用请执行冻结"})
+		return
+	}
 
 	db.Exec("DELETE FROM agent_quotas WHERE agent_id = ?", id)
 	_, err = db.Exec("DELETE FROM agents WHERE id = ?", id)

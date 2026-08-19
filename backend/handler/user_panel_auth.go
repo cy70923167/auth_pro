@@ -465,18 +465,29 @@ func UserResetPassword(c *gin.Context) {
 	}
 	defer db.Close()
 
-	if err := ensureUserAuthStorage(db); err != nil {
+	if err := EnsureAccountUpgradeSchema(db); err != nil {
 		c.JSON(http.StatusOK, gin.H{"code": 500, "msg": "初始化失败"})
 		return
 	}
 
-	var resetID, userID uint
-	var email string
-	err = db.QueryRow(`
-		SELECT id, user_id, email FROM user_password_resets
-		WHERE token_hash = ? AND used_at IS NULL AND expires_at > NOW()
-	`, hex.EncodeToString(tokenHash[:])).Scan(&resetID, &userID, &email)
+	tx, err := db.Begin()
 	if err != nil {
+		c.JSON(http.StatusOK, gin.H{"code": 500, "msg": "重置失败"})
+		return
+	}
+	defer tx.Rollback()
+
+	var resetID, userID uint
+	var email, accountStatus string
+	var enabled bool
+	err = tx.QueryRow(`
+		SELECT r.id, r.user_id, r.email, u.account_status, u.enabled
+		FROM user_password_resets r
+		JOIN users u ON u.id = r.user_id
+		WHERE r.token_hash = ? AND r.used_at IS NULL AND r.expires_at > NOW()
+		FOR UPDATE
+	`, hex.EncodeToString(tokenHash[:])).Scan(&resetID, &userID, &email, &accountStatus, &enabled)
+	if err != nil || accountStatus != "active" || !enabled {
 		c.JSON(http.StatusOK, gin.H{"code": 400, "msg": "重置链接无效或已过期，请重新申请"})
 		return
 	}
@@ -486,12 +497,26 @@ func UserResetPassword(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"code": 500, "msg": "密码处理失败"})
 		return
 	}
-	if _, err := db.Exec("UPDATE users SET password_hash = ? WHERE id = ?", string(hash), userID); err != nil {
+	result, err := tx.Exec(`
+		UPDATE users SET password_hash = ?
+		WHERE id = ? AND account_status = 'active' AND enabled = 1
+	`, string(hash), userID)
+	if err != nil {
 		c.JSON(http.StatusOK, gin.H{"code": 500, "msg": "重置失败"})
 		return
 	}
-	_, _ = db.Exec("UPDATE user_password_resets SET used_at = NOW() WHERE id = ?", resetID)
-	_, _ = db.Exec("UPDATE user_password_resets SET used_at = NOW() WHERE email = ? AND used_at IS NULL", email)
+	if affected, _ := result.RowsAffected(); affected != 1 {
+		c.JSON(http.StatusOK, gin.H{"code": 400, "msg": "重置链接无效或已过期，请重新申请"})
+		return
+	}
+	if _, err := tx.Exec("UPDATE user_password_resets SET used_at = NOW() WHERE email = ? AND used_at IS NULL", email); err != nil {
+		c.JSON(http.StatusOK, gin.H{"code": 500, "msg": "重置失败"})
+		return
+	}
+	if err := tx.Commit(); err != nil {
+		c.JSON(http.StatusOK, gin.H{"code": 500, "msg": "重置失败"})
+		return
+	}
 
 	c.JSON(http.StatusOK, gin.H{"code": 200, "msg": "密码重置成功，请使用新密码登录"})
 }

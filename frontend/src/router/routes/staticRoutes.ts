@@ -148,6 +148,12 @@ export const staticRoutes: AppRouteRecordRaw[] = [
         name: 'UserPanelProfile',
         component: () => import('@views/user-panel/profile/index.vue'),
         meta: { title: '个人设置' }
+      },
+      {
+        path: 'become-agent',
+        name: 'UserPanelBecomeAgent',
+        component: () => import('@views/user-panel/become-agent/index.vue'),
+        meta: { title: '开通代理商' }
       }
     ]
   },

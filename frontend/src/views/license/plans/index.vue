@@ -9,11 +9,29 @@
       </template>
 
       <div class="search-bar">
-        <el-select v-model="query.appId" placeholder="选择应用" clearable style="width: 220px" @change="fetchList">
+        <el-select
+          v-model="query.appId"
+          placeholder="选择应用"
+          clearable
+          style="width: 220px"
+          @change="fetchList"
+        >
           <el-option v-for="app in appOptions" :key="app.id" :label="app.name" :value="app.id" />
         </el-select>
-        <el-input v-model="query.keyword" placeholder="套餐名/应用名" clearable style="width: 220px" @keyup.enter="fetchList" />
-        <el-select v-model="query.status" placeholder="状态" clearable style="width: 140px" @change="fetchList">
+        <el-input
+          v-model="query.keyword"
+          placeholder="套餐名/应用名"
+          clearable
+          style="width: 220px"
+          @keyup.enter="fetchList"
+        />
+        <el-select
+          v-model="query.status"
+          placeholder="状态"
+          clearable
+          style="width: 140px"
+          @change="fetchList"
+        >
           <el-option label="启用" value="enabled" />
           <el-option label="禁用" value="disabled" />
         </el-select>
@@ -26,7 +44,9 @@
         <el-table-column prop="name" label="套餐名称" min-width="140" />
         <el-table-column prop="licenseType" label="授权方式" width="110">
           <template #default="{ row }">
-            <el-tag v-if="row.licenseType" size="small" effect="plain">{{ licenseTypeLabel(row.licenseType) }}</el-tag>
+            <el-tag v-if="row.licenseType" size="small" effect="plain">{{
+              licenseTypeLabel(row.licenseType)
+            }}</el-tag>
             <span v-else class="text-secondary">通用</span>
           </template>
         </el-table-column>
@@ -59,7 +79,12 @@
     <el-dialog v-model="dialogVisible" :title="dialogTitle" width="520px" destroy-on-close>
       <el-form ref="formRef" :model="formData" :rules="formRules" label-width="90px">
         <el-form-item label="所属应用" prop="appId">
-          <el-select v-model="formData.appId" placeholder="请选择应用" style="width: 100%">
+          <el-select
+            v-model="formData.appId"
+            placeholder="请选择应用"
+            style="width: 100%"
+            @change="handleAppChange"
+          >
             <el-option v-for="app in appOptions" :key="app.id" :label="app.name" :value="app.id" />
           </el-select>
         </el-form-item>
@@ -67,14 +92,22 @@
           <el-input v-model="formData.name" placeholder="例如：1个月、3个月、1年、永久" />
         </el-form-item>
         <el-form-item label="授权方式" prop="licenseType">
-          <el-select v-model="formData.licenseType" placeholder="通用（不限授权方式）" clearable style="width: 100%">
-            <el-option label="通用（不限授权方式）" value="" />
-            <el-option label="域名授权" value="domain" />
-            <el-option label="泛域名授权" value="wildcard" />
-            <el-option label="IP 授权" value="ip" />
-            <el-option label="密钥授权" value="key" />
+          <el-select
+            v-model="formData.licenseType"
+            placeholder="请选择授权方式"
+            clearable
+            style="width: 100%"
+            :disabled="!formData.appId || availableLicenseTypes.length === 0"
+          >
+            <el-option label="通用（当前应用全部授权方式）" value="" />
+            <el-option
+              v-for="licenseType in availableLicenseTypes"
+              :key="licenseType"
+              :label="licenseTypeLabels[licenseType] || licenseType"
+              :value="licenseType"
+            />
           </el-select>
-          <div class="form-tip" style="margin-left: 0; margin-top: 4px">不选表示该套餐适用于所有授权方式</div>
+          <div class="form-tip" style="margin-left: 0; margin-top: 4px">{{ licenseTypeTip }}</div>
         </el-form-item>
         <el-form-item label="快捷时长">
           <el-space wrap>
@@ -85,14 +118,31 @@
           </el-space>
         </el-form-item>
         <el-form-item label="授权天数" prop="durationDays">
-          <el-input-number v-model="formData.durationDays" :min="0" :precision="0" :step="30" controls-position="right" />
+          <el-input-number
+            v-model="formData.durationDays"
+            :min="0"
+            :precision="0"
+            :step="30"
+            controls-position="right"
+          />
           <span class="form-tip">0 表示永久</span>
         </el-form-item>
         <el-form-item label="价格" prop="price">
-          <el-input-number v-model="formData.price" :min="0" :precision="2" :step="10" controls-position="right" />
+          <el-input-number
+            v-model="formData.price"
+            :min="0"
+            :precision="2"
+            :step="10"
+            controls-position="right"
+          />
         </el-form-item>
         <el-form-item label="排序">
-          <el-input-number v-model="formData.sort" :precision="0" :step="10" controls-position="right" />
+          <el-input-number
+            v-model="formData.sort"
+            :precision="0"
+            :step="10"
+            controls-position="right"
+          />
         </el-form-item>
         <el-form-item label="状态">
           <el-switch v-model="formData.enabled" active-text="启用" inactive-text="禁用" />
@@ -110,82 +160,25 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
-import request from '@/utils/http'
+  import { computed, onMounted, reactive, ref } from 'vue'
+  import { ElMessage, ElMessageBox } from 'element-plus'
+  import request from '@/utils/http'
 
-const tableData = ref<any[]>([])
-const appOptions = ref<any[]>([])
-const dialogVisible = ref(false)
-const isEdit = ref(false)
-const formRef = ref()
+  const tableData = ref<any[]>([])
+  const appOptions = ref<any[]>([])
+  const dialogVisible = ref(false)
+  const isEdit = ref(false)
+  const formRef = ref()
 
-const query = reactive({
-  appId: undefined as number | undefined,
-  keyword: '',
-  status: ''
-})
-
-const formData = reactive({
-  id: 0,
-  appId: undefined as number | undefined,
-  name: '',
-  licenseType: '',
-  durationDays: 30,
-  price: 0,
-  sort: 0,
-  enabled: true,
-  remark: ''
-})
-
-const licenseTypeLabels: Record<string, string> = {
-  domain: '域名',
-  wildcard: '泛域名',
-  ip: 'IP',
-  key: '密钥'
-}
-
-function licenseTypeLabel(value: string): string {
-  return licenseTypeLabels[value] || value
-}
-
-const dialogTitle = computed(() => (isEdit.value ? '编辑套餐' : '新增套餐'))
-
-const formRules = {
-  appId: [{ required: true, message: '请选择应用', trigger: 'change' }],
-  name: [{ required: true, message: '请输入套餐名称', trigger: 'blur' }],
-  durationDays: [{ required: true, message: '请输入授权天数', trigger: 'blur' }],
-  price: [{ required: true, message: '请输入价格', trigger: 'blur' }]
-}
-
-async function fetchApps() {
-  const data = await request.get<any[]>({ url: '/api/license/apps' })
-  appOptions.value = data || []
-}
-
-async function fetchList() {
-  const data = await request.get<any[]>({
-    url: '/api/plan/list',
-    params: {
-      appId: query.appId,
-      keyword: query.keyword,
-      status: query.status
-    }
+  const query = reactive({
+    appId: undefined as number | undefined,
+    keyword: '',
+    status: ''
   })
-  tableData.value = data || []
-}
 
-function handleReset() {
-  query.appId = undefined
-  query.keyword = ''
-  query.status = ''
-  fetchList()
-}
-
-function resetForm() {
-  Object.assign(formData, {
+  const formData = reactive({
     id: 0,
-    appId: undefined,
+    appId: undefined as number | undefined,
     name: '',
     licenseType: '',
     durationDays: 30,
@@ -194,110 +187,190 @@ function resetForm() {
     enabled: true,
     remark: ''
   })
-}
 
-function applyPreset(name: string, days: number) {
-  formData.name = name
-  formData.durationDays = days
-}
+  const licenseTypeLabels: Record<string, string> = {
+    domain: '单域名授权',
+    wildcard: '泛域名授权',
+    ip: 'IP 授权',
+    key: '密钥授权'
+  }
 
-function handleAdd() {
-  isEdit.value = false
-  resetForm()
-  dialogVisible.value = true
-}
-
-function handleEdit(row: any) {
-  isEdit.value = true
-  Object.assign(formData, {
-    id: row.id,
-    appId: row.appId,
-    name: row.name,
-    licenseType: row.licenseType || '',
-    durationDays: row.durationDays,
-    price: Number(row.price || 0),
-    sort: row.sort || 0,
-    enabled: row.enabled,
-    remark: row.remark || ''
+  const selectedApp = computed(() => appOptions.value.find((app) => app.id === formData.appId))
+  const availableLicenseTypes = computed<string[]>(() =>
+    Array.isArray(selectedApp.value?.purchaseLicenseTypes)
+      ? selectedApp.value.purchaseLicenseTypes
+      : []
+  )
+  const licenseTypeTip = computed(() => {
+    if (!formData.appId) return '请先选择所属应用'
+    if (availableLicenseTypes.value.length === 0)
+      return '该应用未配置可用授权方式，请先在应用管理中配置'
+    return `仅显示当前应用已配置的授权方式：${availableLicenseTypes.value.map(licenseTypeLabel).join('、')}`
   })
-  dialogVisible.value = true
-}
 
-async function handleSubmit() {
-  const valid = await formRef.value?.validate().catch(() => false)
-  if (!valid) return
-
-  const payload = {
-    appId: formData.appId,
-    name: formData.name,
-    licenseType: formData.licenseType,
-    durationDays: formData.durationDays,
-    price: formData.price,
-    sort: formData.sort,
-    enabled: formData.enabled,
-    remark: formData.remark
+  function licenseTypeLabel(value: string): string {
+    return licenseTypeLabels[value] || value
   }
 
-  if (isEdit.value) {
-    await request.put({ url: `/api/plan/${formData.id}`, data: payload })
-    ElMessage.success('编辑成功')
-  } else {
-    await request.post({ url: '/api/plan/create', data: payload })
-    ElMessage.success('新增成功')
+  const dialogTitle = computed(() => (isEdit.value ? '编辑套餐' : '新增套餐'))
+
+  const formRules = {
+    appId: [{ required: true, message: '请选择应用', trigger: 'change' }],
+    name: [{ required: true, message: '请输入套餐名称', trigger: 'blur' }],
+    durationDays: [{ required: true, message: '请输入授权天数', trigger: 'blur' }],
+    price: [{ required: true, message: '请输入价格', trigger: 'blur' }]
   }
-  dialogVisible.value = false
-  fetchList()
-}
 
-async function handleToggle(row: any) {
-  await request.put({ url: `/api/plan/${row.id}/toggle` })
-  ElMessage.success('操作成功')
-  fetchList()
-}
+  async function fetchApps() {
+    const data = await request.get<any[]>({ url: '/api/app/list' })
+    appOptions.value = data || []
+  }
 
-async function handleDelete(row: any) {
-  try {
-    await ElMessageBox.confirm(`确定删除套餐「${row.name}」？`, '删除套餐', { type: 'warning' })
-    await request.del({ url: `/api/plan/${row.id}` })
-    ElMessage.success('删除成功')
+  async function fetchList() {
+    const data = await request.get<any[]>({
+      url: '/api/plan/list',
+      params: {
+        appId: query.appId,
+        keyword: query.keyword,
+        status: query.status
+      }
+    })
+    tableData.value = data || []
+  }
+
+  function handleReset() {
+    query.appId = undefined
+    query.keyword = ''
+    query.status = ''
     fetchList()
-  } catch {}
-}
+  }
 
-onMounted(async () => {
-  await fetchApps()
-  fetchList()
-})
+  function resetForm() {
+    Object.assign(formData, {
+      id: 0,
+      appId: undefined,
+      name: '',
+      licenseType: '',
+      durationDays: 30,
+      price: 0,
+      sort: 0,
+      enabled: true,
+      remark: ''
+    })
+  }
+
+  function handleAppChange() {
+    if (formData.licenseType && !availableLicenseTypes.value.includes(formData.licenseType)) {
+      formData.licenseType = ''
+    }
+    formRef.value?.clearValidate('licenseType')
+  }
+
+  function applyPreset(name: string, days: number) {
+    formData.name = name
+    formData.durationDays = days
+  }
+
+  function handleAdd() {
+    isEdit.value = false
+    resetForm()
+    dialogVisible.value = true
+  }
+
+  function handleEdit(row: any) {
+    isEdit.value = true
+    Object.assign(formData, {
+      id: row.id,
+      appId: row.appId,
+      name: row.name,
+      licenseType: row.licenseType || '',
+      durationDays: row.durationDays,
+      price: Number(row.price || 0),
+      sort: row.sort || 0,
+      enabled: row.enabled,
+      remark: row.remark || ''
+    })
+    handleAppChange()
+    dialogVisible.value = true
+  }
+
+  async function handleSubmit() {
+    const valid = await formRef.value?.validate().catch(() => false)
+    if (!valid) return
+
+    const payload = {
+      appId: formData.appId,
+      name: formData.name,
+      licenseType: formData.licenseType,
+      durationDays: formData.durationDays,
+      price: formData.price,
+      sort: formData.sort,
+      enabled: formData.enabled,
+      remark: formData.remark
+    }
+
+    if (isEdit.value) {
+      await request.put({ url: `/api/plan/${formData.id}`, data: payload })
+      ElMessage.success('编辑成功')
+    } else {
+      await request.post({ url: '/api/plan/create', data: payload })
+      ElMessage.success('新增成功')
+    }
+    dialogVisible.value = false
+    fetchList()
+  }
+
+  async function handleToggle(row: any) {
+    await request.put({ url: `/api/plan/${row.id}/toggle` })
+    ElMessage.success('操作成功')
+    fetchList()
+  }
+
+  async function handleDelete(row: any) {
+    try {
+      await ElMessageBox.confirm(`确定删除套餐「${row.name}」？`, '删除套餐', { type: 'warning' })
+      await request.del({ url: `/api/plan/${row.id}` })
+      ElMessage.success('删除成功')
+      fetchList()
+    } catch {
+      return
+    }
+  }
+
+  onMounted(async () => {
+    await fetchApps()
+    fetchList()
+  })
 </script>
 
 <style scoped lang="scss">
-.license-plans {
-  .table-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-  }
+  .license-plans {
+    .table-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
 
-  .card-title {
-    font-weight: 600;
-  }
+    .card-title {
+      font-weight: 600;
+    }
 
-  .search-bar {
-    display: flex;
-    gap: 12px;
-    margin-bottom: 16px;
-    flex-wrap: wrap;
-  }
+    .search-bar {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+    }
 
-  .form-tip {
-    margin-left: 12px;
-    color: var(--el-text-color-secondary);
-    font-size: 12px;
-  }
+    .form-tip {
+      margin-left: 12px;
+      color: var(--el-text-color-secondary);
+      font-size: 12px;
+    }
 
-  .text-secondary {
-    color: var(--el-text-color-secondary);
-    font-size: 13px;
+    .text-secondary {
+      color: var(--el-text-color-secondary);
+      font-size: 13px;
+    }
   }
-}
 </style>

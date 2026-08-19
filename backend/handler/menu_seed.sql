@@ -46,8 +46,9 @@ INSERT INTO `menus` (`id`, `parent_id`, `name`, `path`, `component`, `title`, `i
 INSERT INTO `menus` (`id`, `parent_id`, `name`, `path`, `component`, `title`, `icon`, `sort`, `keep_alive`) VALUES
 (401, 4, 'AgentList',     'list',     '/agent/list',     '代理商列表', 'ri:user-star-line',         1, 1),
 (402, 4, 'AgentLevel',    'level',    '/agent/level',    '等级管理',   'ri:vip-crown-line',        2, 1),
-(403, 4, 'AgentRecharge', 'recharge', '/agent/recharge', '财务流水',   'ri:money-cny-circle-line',  3, 1),
-(404, 4, 'AgentQuota',    'quota',    '/agent/quota',    '开码配额',   'ri:key-2-line',             4, 1);
+(405, 4, 'AgentUpgrade',  'upgrade',  '/agent/upgrade',  '升级审计',   'ri:user-shared-line',       3, 1),
+(403, 4, 'AgentRecharge', 'recharge', '/agent/recharge', '财务流水',   'ri:money-cny-circle-line',  4, 1),
+(404, 4, 'AgentQuota',    'quota',    '/agent/quota',    '开码配额',   'ri:key-2-line',             5, 1);
 
 -- Piracy 子菜单
 INSERT INTO `menus` (`id`, `parent_id`, `name`, `path`, `component`, `title`, `icon`, `sort`, `keep_alive`) VALUES

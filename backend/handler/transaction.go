@@ -81,7 +81,10 @@ func TransactionList(c *gin.Context) {
 	}
 	defer rows.Close()
 
-	typeLabels := map[string]string{"recharge": "充值", "consume": "消费", "refund": "退款", "purchase": "购买"}
+	typeLabels := map[string]string{
+		"recharge": "充值", "consume": "消费", "refund": "退款", "purchase": "购买",
+		"transfer": "账户迁移", "bonus": "开通赠送",
+	}
 
 	type txItem struct {
 		ID           int64   `json:"id"`

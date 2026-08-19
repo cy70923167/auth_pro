@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"crypto/rand"
+	"database/sql"
 	"encoding/hex"
 	"log"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"auto_pro/config"
 
 	"github.com/gin-gonic/gin"
+	_ "github.com/go-sql-driver/mysql"
 	"github.com/golang-jwt/jwt/v5"
 )
 
@@ -88,6 +90,65 @@ func JWTAuth() gin.HandlerFunc {
 		c.Set("user_id", claims.UserID)
 		c.Set("username", claims.Username)
 		c.Set("role", claims.Role)
+		c.Next()
+	}
+}
+
+func activeUserRejection(enabled bool, accountStatus string, convertedAgentID sql.NullInt64) (string, bool) {
+	if accountStatus == "converted" || convertedAgentID.Valid {
+		return "该账号已升级为代理，请前往代理端登录", true
+	}
+	if !enabled {
+		return "用户账户已禁用", false
+	}
+	return "", false
+}
+
+// RequireActiveUser rejects stale user tokens immediately after account conversion.
+func RequireActiveUser() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if c.GetString("role") != "user" {
+			c.JSON(http.StatusForbidden, gin.H{"code": 403, "message": "无权限访问用户端"})
+			c.Abort()
+			return
+		}
+
+		cfg, err := config.LoadDBConfig()
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "message": "用户状态校验失败"})
+			c.Abort()
+			return
+		}
+		db, err := sql.Open("mysql", config.GetDSN(cfg))
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "message": "用户状态校验失败"})
+			c.Abort()
+			return
+		}
+		defer db.Close()
+
+		var enabled bool
+		var accountStatus string
+		var convertedAgentID sql.NullInt64
+		err = db.QueryRow(`
+			SELECT enabled, account_status, converted_agent_id
+			FROM users WHERE id = ?
+		`, c.GetUint("user_id")).Scan(&enabled, &accountStatus, &convertedAgentID)
+		if err != nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"code": 401, "message": "用户账户不存在或已失效"})
+			c.Abort()
+			return
+		}
+		message, converted := activeUserRejection(enabled, accountStatus, convertedAgentID)
+		if message != "" {
+			response := gin.H{"code": 401, "message": message}
+			if converted {
+				response["data"] = gin.H{"converted": true, "agentId": convertedAgentID.Int64}
+			}
+			c.JSON(http.StatusUnauthorized, response)
+			c.Abort()
+			return
+		}
 		c.Next()
 	}
 }

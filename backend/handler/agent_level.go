@@ -3,6 +3,7 @@ package handler
 import (
 	"database/sql"
 	"fmt"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -21,13 +22,18 @@ func ensureAgentLevelSchema(db *sql.DB) error {
 			code VARCHAR(50) NOT NULL COMMENT '等级编码',
 			name VARCHAR(50) NOT NULL COMMENT '等级名称',
 			discount DECIMAL(3,1) NOT NULL DEFAULT 9.0 COMMENT '折扣(1-10)',
+			self_service_enabled TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否允许用户自助开通',
+			upgrade_price DECIMAL(12,2) NOT NULL DEFAULT 0.00 COMMENT '用户自助开通价格',
+			opening_bonus DECIMAL(12,2) NOT NULL DEFAULT 0.00 COMMENT '自助开通赠送余额',
+			benefits TEXT COMMENT '等级权益说明',
 			sort INT DEFAULT 0 COMMENT '排序',
 			enabled TINYINT(1) DEFAULT 1 COMMENT '是否启用',
 			remark VARCHAR(255) DEFAULT '' COMMENT '备注',
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
 			PRIMARY KEY (id),
-			UNIQUE KEY uk_agent_level_code (code)
+			UNIQUE KEY uk_agent_level_code (code),
+			KEY idx_agent_level_self_service (self_service_enabled, enabled, sort)
 		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='代理商等级表'
 	`)
 	if err != nil {
@@ -38,12 +44,31 @@ func ensureAgentLevelSchema(db *sql.DB) error {
 	_, _ = db.Exec("ALTER TABLE agents MODIFY COLUMN level VARCHAR(50) DEFAULT 'bronze' COMMENT '等级编码'")
 	_, _ = db.Exec("ALTER TABLE agents ADD COLUMN discount DECIMAL(3,1) DEFAULT 9.0 COMMENT '折扣(1-10)' AFTER level")
 	_, _ = db.Exec("ALTER TABLE agents ADD COLUMN remark VARCHAR(255) DEFAULT '' COMMENT '备注' AFTER balance")
+	if err := ensureColumn(db, "agent_levels", "self_service_enabled",
+		"ALTER TABLE agent_levels ADD COLUMN self_service_enabled TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否允许用户自助开通' AFTER discount"); err != nil {
+		return err
+	}
+	if err := ensureColumn(db, "agent_levels", "upgrade_price",
+		"ALTER TABLE agent_levels ADD COLUMN upgrade_price DECIMAL(12,2) NOT NULL DEFAULT 0.00 COMMENT '用户自助开通价格' AFTER self_service_enabled"); err != nil {
+		return err
+	}
+	if err := ensureColumn(db, "agent_levels", "opening_bonus",
+		"ALTER TABLE agent_levels ADD COLUMN opening_bonus DECIMAL(12,2) NOT NULL DEFAULT 0.00 COMMENT '自助开通赠送余额' AFTER upgrade_price"); err != nil {
+		return err
+	}
+	if err := ensureColumn(db, "agent_levels", "benefits",
+		"ALTER TABLE agent_levels ADD COLUMN benefits TEXT COMMENT '等级权益说明' AFTER opening_bonus"); err != nil {
+		return err
+	}
+	if err := ensureIndex(db, "agent_levels", "idx_agent_level_self_service", []string{"self_service_enabled", "enabled", "sort"}, false); err != nil {
+		return err
+	}
 
 	_, err = db.Exec(`
-		INSERT IGNORE INTO agent_levels (code, name, discount, sort, enabled, remark) VALUES
-		('gold', '金牌代理', 7.0, 1, 1, '默认金牌等级'),
-		('silver', '银牌代理', 8.0, 2, 1, '默认银牌等级'),
-		('bronze', '铜牌代理', 9.0, 3, 1, '默认铜牌等级')
+		INSERT IGNORE INTO agent_levels (code, name, discount, self_service_enabled, upgrade_price, sort, enabled, remark) VALUES
+		('gold', '金牌代理', 7.0, 0, 0.00, 1, 1, '默认金牌等级'),
+		('silver', '银牌代理', 8.0, 0, 0.00, 2, 1, '默认银牌等级'),
+		('bronze', '铜牌代理', 9.0, 0, 0.00, 3, 1, '默认铜牌等级')
 	`)
 	if err != nil {
 		return err
@@ -140,6 +165,35 @@ func validateAgentLevelPayload(code, name string, discount float64) string {
 	return ""
 }
 
+const maxAgentLevelMoneyCents int64 = 999999999999
+
+func validateAgentLevelMoney(value float64, field string) (int64, string) {
+	if math.IsNaN(value) || math.IsInf(value, 0) || value < 0 || value > 9999999999.99 {
+		return 0, fmt.Sprintf("%s需在 0-9999999999.99 元之间", field)
+	}
+	scaled := value * 100
+	cents := int64(math.Round(scaled))
+	if cents < 0 || cents > maxAgentLevelMoneyCents || math.Abs(scaled-float64(cents)) > 0.000001 {
+		return 0, fmt.Sprintf("%s最多保留两位小数", field)
+	}
+	return cents, ""
+}
+
+func validateAgentLevelSelfService(enabled bool, price, openingBonus float64) (int64, int64, string) {
+	priceCents, msg := validateAgentLevelMoney(price, "自助开通价格")
+	if msg != "" {
+		return 0, 0, msg
+	}
+	bonusCents, msg := validateAgentLevelMoney(openingBonus, "开通赠送余额")
+	if msg != "" {
+		return 0, 0, msg
+	}
+	if enabled && priceCents < 1 {
+		return 0, 0, "允许自助开通时，开通价格不能低于 0.01 元"
+	}
+	return priceCents, bonusCents, ""
+}
+
 // AgentLevelList 代理商等级列表
 func AgentLevelList(c *gin.Context) {
 	db, ok := openAgentLevelDB(c)
@@ -177,7 +231,8 @@ func AgentLevelList(c *gin.Context) {
 
 	offset := (page - 1) * pageSize
 	rows, err := db.Query(fmt.Sprintf(`
-		SELECT id, code, name, discount, sort, enabled, remark, created_at, updated_at,
+		SELECT id, code, name, discount, self_service_enabled, upgrade_price, opening_bonus,
+		       COALESCE(benefits, ''), sort, enabled, remark, created_at, updated_at,
 		       (SELECT COUNT(*) FROM agents a WHERE a.level = agent_levels.code OR a.level = agent_levels.name) AS agent_count
 		FROM agent_levels
 		WHERE %s
@@ -191,16 +246,20 @@ func AgentLevelList(c *gin.Context) {
 	defer rows.Close()
 
 	type levelItem struct {
-		ID         int64   `json:"id"`
-		Code       string  `json:"code"`
-		Name       string  `json:"name"`
-		Discount   float64 `json:"discount"`
-		Sort       int     `json:"sort"`
-		Enabled    bool    `json:"enabled"`
-		Remark     string  `json:"remark"`
-		AgentCount int64   `json:"agentCount"`
-		CreatedAt  string  `json:"createdAt"`
-		UpdatedAt  string  `json:"updatedAt"`
+		ID                 int64   `json:"id"`
+		Code               string  `json:"code"`
+		Name               string  `json:"name"`
+		Discount           float64 `json:"discount"`
+		SelfServiceEnabled bool    `json:"selfServiceEnabled"`
+		UpgradePrice       float64 `json:"upgradePrice"`
+		OpeningBonus       float64 `json:"openingBonus"`
+		Benefits           string  `json:"benefits"`
+		Sort               int     `json:"sort"`
+		Enabled            bool    `json:"enabled"`
+		Remark             string  `json:"remark"`
+		AgentCount         int64   `json:"agentCount"`
+		CreatedAt          string  `json:"createdAt"`
+		UpdatedAt          string  `json:"updatedAt"`
 	}
 
 	list := []levelItem{}
@@ -208,7 +267,9 @@ func AgentLevelList(c *gin.Context) {
 		var item levelItem
 		var remark sql.NullString
 		var createdAt, updatedAt time.Time
-		if err := rows.Scan(&item.ID, &item.Code, &item.Name, &item.Discount, &item.Sort, &item.Enabled, &remark, &createdAt, &updatedAt, &item.AgentCount); err != nil {
+		if err := rows.Scan(&item.ID, &item.Code, &item.Name, &item.Discount, &item.SelfServiceEnabled,
+			&item.UpgradePrice, &item.OpeningBonus, &item.Benefits, &item.Sort, &item.Enabled, &remark, &createdAt, &updatedAt,
+			&item.AgentCount); err != nil {
 			continue
 		}
 		if remark.Valid {
@@ -256,18 +317,27 @@ func AgentLevelSelectList(c *gin.Context) {
 // AgentLevelCreate 新增代理商等级
 func AgentLevelCreate(c *gin.Context) {
 	var req struct {
-		Code     string  `json:"code"`
-		Name     string  `json:"name"`
-		Discount float64 `json:"discount"`
-		Sort     int     `json:"sort"`
-		Enabled  bool    `json:"enabled"`
-		Remark   string  `json:"remark"`
+		Code               string  `json:"code"`
+		Name               string  `json:"name"`
+		Discount           float64 `json:"discount"`
+		SelfServiceEnabled bool    `json:"selfServiceEnabled"`
+		UpgradePrice       float64 `json:"upgradePrice"`
+		OpeningBonus       float64 `json:"openingBonus"`
+		Benefits           string  `json:"benefits"`
+		Sort               int     `json:"sort"`
+		Enabled            bool    `json:"enabled"`
+		Remark             string  `json:"remark"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusOK, gin.H{"code": 400, "msg": "参数错误"})
 		return
 	}
 	if msg := validateAgentLevelPayload(req.Code, req.Name, req.Discount); msg != "" {
+		c.JSON(http.StatusOK, gin.H{"code": 400, "msg": msg})
+		return
+	}
+	priceCents, bonusCents, msg := validateAgentLevelSelfService(req.SelfServiceEnabled, req.UpgradePrice, req.OpeningBonus)
+	if msg != "" {
 		c.JSON(http.StatusOK, gin.H{"code": 400, "msg": msg})
 		return
 	}
@@ -278,8 +348,12 @@ func AgentLevelCreate(c *gin.Context) {
 	}
 	defer db.Close()
 
-	_, err := db.Exec("INSERT INTO agent_levels (code, name, discount, sort, enabled, remark) VALUES (?, ?, ?, ?, ?, ?)",
-		strings.TrimSpace(req.Code), strings.TrimSpace(req.Name), req.Discount, req.Sort, req.Enabled, req.Remark)
+	_, err := db.Exec(`
+		INSERT INTO agent_levels (
+			code, name, discount, self_service_enabled, upgrade_price, opening_bonus, benefits, sort, enabled, remark
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, strings.TrimSpace(req.Code), strings.TrimSpace(req.Name), req.Discount, req.SelfServiceEnabled,
+		formatCents(priceCents), formatCents(bonusCents), strings.TrimSpace(req.Benefits), req.Sort, req.Enabled, strings.TrimSpace(req.Remark))
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{"code": 500, "msg": "创建失败: " + err.Error()})
 		return
@@ -291,11 +365,15 @@ func AgentLevelCreate(c *gin.Context) {
 func AgentLevelUpdate(c *gin.Context) {
 	id := c.Param("id")
 	var req struct {
-		Name     string  `json:"name"`
-		Discount float64 `json:"discount"`
-		Sort     int     `json:"sort"`
-		Enabled  bool    `json:"enabled"`
-		Remark   string  `json:"remark"`
+		Name               string  `json:"name"`
+		Discount           float64 `json:"discount"`
+		SelfServiceEnabled bool    `json:"selfServiceEnabled"`
+		UpgradePrice       float64 `json:"upgradePrice"`
+		OpeningBonus       float64 `json:"openingBonus"`
+		Benefits           string  `json:"benefits"`
+		Sort               int     `json:"sort"`
+		Enabled            bool    `json:"enabled"`
+		Remark             string  `json:"remark"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusOK, gin.H{"code": 400, "msg": "参数错误"})
@@ -307,6 +385,11 @@ func AgentLevelUpdate(c *gin.Context) {
 	}
 	if req.Discount < 1 || req.Discount > 10 {
 		c.JSON(http.StatusOK, gin.H{"code": 400, "msg": "折扣需在 1-10 之间"})
+		return
+	}
+	priceCents, bonusCents, msg := validateAgentLevelSelfService(req.SelfServiceEnabled, req.UpgradePrice, req.OpeningBonus)
+	if msg != "" {
+		c.JSON(http.StatusOK, gin.H{"code": 400, "msg": msg})
 		return
 	}
 
@@ -329,8 +412,13 @@ func AgentLevelUpdate(c *gin.Context) {
 		return
 	}
 
-	_, err := db.Exec("UPDATE agent_levels SET name = ?, discount = ?, sort = ?, enabled = ?, remark = ? WHERE id = ?",
-		strings.TrimSpace(req.Name), req.Discount, req.Sort, req.Enabled, req.Remark, id)
+	_, err := db.Exec(`
+		UPDATE agent_levels
+		SET name = ?, discount = ?, self_service_enabled = ?, upgrade_price = ?, opening_bonus = ?, benefits = ?,
+		    sort = ?, enabled = ?, remark = ?
+		WHERE id = ?
+	`, strings.TrimSpace(req.Name), req.Discount, req.SelfServiceEnabled, formatCents(priceCents),
+		formatCents(bonusCents), strings.TrimSpace(req.Benefits), req.Sort, req.Enabled, strings.TrimSpace(req.Remark), id)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{"code": 500, "msg": "更新失败"})
 		return

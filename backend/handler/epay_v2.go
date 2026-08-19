@@ -425,11 +425,18 @@ func settleEpayV2Callback(db *sql.DB, params map[string]string) error {
 	}
 
 	payload, _ := json.Marshal(params)
-	if err := settleRechargeOrder(db, orderNo, paidCents, params["trade_no"], params["type"], string(payload)); err == nil {
+	payMethod, ok := normalizeEpayPayType(params["type"], "")
+	if !ok {
+		return errors.New("回调支付方式不受支持")
+	}
+	if strings.HasPrefix(orderNo, "AU") {
+		return settleAgentUpgradeOnlinePayment(db, orderNo, paidCents, payChannelEpayV2, payMethod, params["trade_no"], string(payload))
+	}
+	if err := settleRechargeOrder(db, orderNo, paidCents, params["trade_no"], payMethod, string(payload)); err == nil {
 		return nil
 	}
 	// 不是充值订单时，尝试按授权购买订单结算（代理端线上支付开通授权）。
-	return settleLicensePurchaseOrder(db, orderNo, paidCents, params["trade_no"], params["type"], string(payload))
+	return settleLicensePurchaseOrder(db, orderNo, paidCents, payChannelEpayV2, params["trade_no"], payMethod, string(payload))
 }
 
 // EpayV2Notify V2 异步通知入口。
