@@ -376,8 +376,8 @@
     balance: '余额支付',
     quota: '配额支付',
     alipay: '支付宝',
-    wxpay: '微信支付',
-    qqpay: 'QQ钱包',
+    wxpay: '微信',
+    qqpay: 'QQ支付',
     bank: '网银支付'
   }
 

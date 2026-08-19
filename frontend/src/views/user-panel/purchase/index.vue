@@ -379,8 +379,8 @@
   })
   const payTypeLabels: Record<string, string> = {
     alipay: '支付宝',
-    wxpay: '微信支付',
-    qqpay: 'QQ 钱包'
+    wxpay: '微信',
+    qqpay: 'QQ支付'
   }
   const rechargeOptions = reactive({
     payTypes: [] as string[],

@@ -122,13 +122,8 @@ func epayPayTypeOptions(channel string, payTypes []string) []payOption {
 	}
 	metas := map[string]meta{
 		"alipay": {"支付宝", "ri:alipay-fill", "#1677ff"},
-		"wxpay":  {"微信支付", "ri:wechat-pay-fill", "#07c160"},
-		"qqpay":  {"QQ钱包", "ri:qq-fill", "#12b7f5"},
-		"bank":   {"网银支付", "ri:bank-card-line", "#d4380d"},
-	}
-	channelLabel := "V1"
-	if channel == payChannelEpayV2 {
-		channelLabel = "V2"
+		"wxpay":  {"微信", "ri:wechat-pay-fill", "#07c160"},
+		"qqpay":  {"QQ支付", "ri:qq-fill", "#12b7f5"},
 	}
 	var out []payOption
 	for _, payType := range payTypes {
@@ -138,13 +133,13 @@ func epayPayTypeOptions(channel string, payTypes []string) []payOption {
 		}
 		m, ok := metas[normalized]
 		if !ok {
-			m = meta{label: normalized, icon: "ri:bank-card-line", color: "#666666"}
+			continue
 		}
 		out = append(out, payOption{
 			Code:    channel + ":" + normalized,
 			Channel: channel,
 			PayType: normalized,
-			Label:   m.label + " · " + channelLabel,
+			Label:   m.label,
 			Icon:    m.icon,
 			Color:   m.color,
 		})
@@ -156,10 +151,14 @@ func dedupePayOptions(options []payOption) []payOption {
 	seen := map[string]bool{}
 	out := options[:0]
 	for _, option := range options {
-		if seen[option.Code] {
+		key := option.Code
+		if option.PayType != "" {
+			key = "online:" + option.PayType
+		}
+		if seen[key] {
 			continue
 		}
-		seen[option.Code] = true
+		seen[key] = true
 		out = append(out, option)
 	}
 	return out
@@ -898,7 +897,7 @@ func payMethodLabel(code string) string {
 	case "wxpay":
 		return "微信"
 	case "qqpay":
-		return "QQ钱包"
+		return "QQ支付"
 	case "balance":
 		return "余额"
 	default:

@@ -1009,7 +1009,7 @@ func AgentPanelPurchase(c *gin.Context) {
 
 	// 线上支付（支付宝/微信/QQ 等）单独走支付下单流程，不在这里结算。
 	if req.PayMethod != "" && req.PayMethod != "balance" && req.PayMethod != "quota" {
-		if _, enabled := normalizeEpayPayType(req.PayMethod, ""); !enabled {
+		if _, enabled := parseOnlinePaySelection(req.PayMethod); !enabled {
 			c.JSON(http.StatusOK, gin.H{"code": 400, "msg": "不支持的支付方式"})
 			return
 		}
