@@ -5,7 +5,7 @@
         <el-form-item label="等级关键词">
           <el-input
             v-model.trim="searchForm.keyword"
-            placeholder="编码 / 名称"
+            placeholder="等级名称"
             clearable
             class="search-input"
             @keyup.enter="handleSearch()"
@@ -74,7 +74,6 @@
           <template #default="{ row }">
             <div class="level-name">
               <el-tag :type="levelTagType(row.discount)" size="small">{{ row.name }}</el-tag>
-              <span class="level-code">{{ row.code }}</span>
             </div>
           </template>
         </el-table-column>
@@ -194,14 +193,6 @@
       @closed="resetFormValidate"
     >
       <el-form :model="formData" :rules="formRules" ref="formRef" label-width="120px">
-        <el-form-item label="等级编码" prop="code">
-          <el-input
-            v-model.trim="formData.code"
-            :disabled="isEdit"
-            placeholder="例如 gold、vip_1"
-          />
-          <div class="form-tip">编码用于代理商等级绑定，保存后不可修改。</div>
-        </el-form-item>
         <el-form-item label="等级名称" prop="name">
           <el-input
             v-model.trim="formData.name"
@@ -222,11 +213,7 @@
           <span class="form-tip inline">数值越小，代理商拿货价格越低。</span>
         </el-form-item>
         <el-form-item label="用户自助开通">
-          <el-switch
-            v-model="formData.selfServiceEnabled"
-            active-text="允许"
-            inactive-text="关闭"
-          />
+          <el-switch v-model="formData.selfServiceEnabled" />
           <div class="form-tip">默认关闭；仅开启后，该等级才会出现在用户端开通代理页面。</div>
         </el-form-item>
         <el-form-item label="开通价格" prop="upgradePrice">
@@ -304,7 +291,6 @@
 
   type AgentLevel = {
     id: number
-    code: string
     name: string
     discount: number
     selfServiceEnabled: boolean
@@ -321,7 +307,6 @@
 
   type LevelForm = {
     id: number
-    code: string
     name: string
     discount: number
     selfServiceEnabled: boolean
@@ -336,7 +321,6 @@
 
   const defaultForm: LevelForm = {
     id: 0,
-    code: '',
     name: '',
     discount: 9,
     selfServiceEnabled: false,
@@ -362,14 +346,6 @@
   const formData = reactive<LevelForm>({ ...defaultForm })
 
   const formRules: FormRules<LevelForm> = {
-    code: [
-      { required: true, message: '请输入等级编码', trigger: 'blur' },
-      {
-        pattern: /^[A-Za-z0-9_-]{2,50}$/,
-        message: '仅支持字母、数字、下划线和中划线，长度 2-50 位',
-        trigger: 'blur'
-      }
-    ],
     name: [{ required: true, message: '请输入等级名称', trigger: 'blur' }],
     discount: [{ required: true, message: '请输入折扣', trigger: 'change' }],
     upgradePrice: [
@@ -470,7 +446,6 @@
     isEdit.value = true
     Object.assign(formData, {
       id: row.id,
-      code: row.code,
       name: row.name,
       discount: Number(row.discount),
       selfServiceEnabled: row.selfServiceEnabled,
@@ -487,7 +462,6 @@
 
   function buildPayload() {
     return {
-      code: formData.code.trim(),
       name: formData.name.trim(),
       discount: Number(formData.discount),
       selfServiceEnabled: formData.selfServiceEnabled,
@@ -623,12 +597,6 @@
       display: flex;
       gap: 8px;
       align-items: center;
-    }
-
-    .level-code {
-      font-family: 'Roboto Mono', monospace;
-      font-size: 12px;
-      color: var(--el-text-color-secondary);
     }
 
     .discount-text {

@@ -4,7 +4,12 @@
     <el-card shadow="hover" class="mb-4">
       <el-form :model="searchForm" inline>
         <el-form-item label="搜索">
-          <el-input v-model="searchForm.keyword" placeholder="域名/IP/密钥" clearable style="width: 180px" />
+          <el-input
+            v-model="searchForm.keyword"
+            placeholder="域名/IP/密钥"
+            clearable
+            style="width: 180px"
+          />
         </el-form-item>
         <el-form-item label="应用">
           <el-select v-model="searchForm.appId" placeholder="全部" clearable style="width: 130px">
@@ -63,7 +68,21 @@
             <span>{{ formatLicenseAmount(row.amount) }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="110" fixed="right" align="center">
+        <el-table-column label="站点" width="110" align="center">
+          <template #default="{ row }">
+            <el-button
+              v-if="row.type === 'key'"
+              link
+              type="primary"
+              size="small"
+              @click="openSiteDialog(row)"
+            >
+              已绑定 {{ row.boundSites ?? 0 }}{{ Number(row.maxSites) ? ` / ${row.maxSites}` : '' }}
+            </el-button>
+            <span v-else class="text-secondary">--</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="150" fixed="right" align="center">
           <template #default="{ row }">
             <el-button
               v-if="canEditTargetType(row.type)"
@@ -74,7 +93,7 @@
             >
               {{ row.bindingPending ? '绑定目标' : '修改目标' }}
             </el-button>
-            <el-text v-else type="info" size="small">不可修改</el-text>
+            <el-text v-else-if="row.type !== 'key'" type="info" size="small">不可修改</el-text>
           </template>
         </el-table-column>
       </el-table>
@@ -95,7 +114,9 @@
     <el-dialog v-model="editDialog.visible" title="修改授权目标" width="420px" destroy-on-close>
       <el-form label-width="90px">
         <el-form-item label="授权类型">
-          <el-tag :type="typeTagMap[editDialog.type]" size="small">{{ editDialog.typeLabel }}</el-tag>
+          <el-tag :type="typeTagMap[editDialog.type]" size="small">{{
+            editDialog.typeLabel
+          }}</el-tag>
         </el-form-item>
         <el-form-item :label="targetLabel">
           <div class="target-editor">
@@ -132,6 +153,57 @@
       </template>
     </el-dialog>
 
+    <el-dialog v-model="siteDialog.visible" title="密钥绑定站点" width="680px" destroy-on-close>
+      <el-alert
+        v-if="siteDialog.maxSites > 0"
+        :title="`当前已绑定 ${siteDialog.list.length} / ${siteDialog.maxSites} 个站点，达到上限后新站点验证会被拒绝，可解绑释放名额。`"
+        type="info"
+        show-icon
+        :closable="false"
+        class="mb-3"
+      />
+      <el-alert
+        v-else
+        title="该密钥不限制站点数量。"
+        type="info"
+        show-icon
+        :closable="false"
+        class="mb-3"
+      />
+      <el-table
+        :data="siteDialog.list"
+        size="small"
+        v-loading="siteDialog.loading"
+        max-height="360"
+      >
+        <el-table-column label="类型" width="80">
+          <template #default="{ row }">
+            <el-tag :type="row.targetType === 'ip' ? 'warning' : ''" size="small">
+              {{ row.targetType === 'ip' ? 'IP' : '域名' }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="target" label="站点" min-width="160" show-overflow-tooltip />
+        <el-table-column prop="serverIp" label="最近服务器IP" width="150" show-overflow-tooltip>
+          <template #default="{ row }">
+            <span>{{ row.serverIp || '--' }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="firstSeenAt" label="首次绑定" width="160" />
+        <el-table-column prop="lastSeenAt" label="最近验证" width="160" />
+        <el-table-column label="操作" width="80" align="center">
+          <template #default="{ row }">
+            <el-button link type="danger" size="small" @click="handleUnbindSite(row)"
+              >解绑</el-button
+            >
+          </template>
+        </el-table-column>
+        <template #empty>
+          <el-empty description="暂无绑定站点" :image-size="60" />
+        </template>
+      </el-table>
+    </el-dialog>
+
     <el-dialog v-model="redeemDialog.visible" title="兑换卡密" width="460px" destroy-on-close>
       <el-alert
         title="兑换后授权将归当前账号，不能转给他人。"
@@ -154,7 +226,9 @@
       </el-form>
       <template #footer>
         <el-button @click="redeemDialog.visible = false">取消</el-button>
-        <el-button type="primary" :loading="redeemDialog.submitting" @click="submitRedeem">确认兑换</el-button>
+        <el-button type="primary" :loading="redeemDialog.submitting" @click="submitRedeem"
+          >确认兑换</el-button
+        >
       </template>
     </el-dialog>
 
@@ -164,7 +238,7 @@
           <div class="redeem-summary">
             <div>{{ redeemResult.appName }} · {{ redeemResult.planName }}</div>
             <div>授权编号：{{ redeemResult.licenseNo }}</div>
-            <div>授权类型：{{ redeemResult.typeLabel }}　有效期至：{{ redeemResult.expireAt }}</div>
+            <div>授权类型：{{ redeemResult.typeLabel }} 有效期至：{{ redeemResult.expireAt }}</div>
           </div>
         </template>
         <template #extra>
@@ -192,231 +266,368 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted, computed } from 'vue'
-import { ElMessage } from 'element-plus'
-import { Icon as IconifyIcon } from '@iconify/vue'
-import axios from 'axios'
+  import { ref, reactive, onMounted, computed } from 'vue'
+  import { ElMessage, ElMessageBox } from 'element-plus'
+  import { Icon as IconifyIcon } from '@iconify/vue'
+  import axios from 'axios'
 
-const loading = ref(false)
-const searchForm = reactive({ keyword: '', appId: '', status: '' })
-const pagination = reactive({ page: 1, pageSize: 10, total: 0 })
-const appList = ref<{ id: number; name: string }[]>([])
-const tableData = ref<any[]>([])
-const editDialog = reactive({
-  visible: false,
-  submitting: false,
-  refreshing: false,
-  id: 0,
-  type: '',
-  typeLabel: '',
-  target: ''
-})
+  const loading = ref(false)
+  const searchForm = reactive({ keyword: '', appId: '', status: '' })
+  const pagination = reactive({ page: 1, pageSize: 10, total: 0 })
+  const appList = ref<{ id: number; name: string }[]>([])
+  const tableData = ref<any[]>([])
+  const editDialog = reactive({
+    visible: false,
+    submitting: false,
+    refreshing: false,
+    id: 0,
+    type: '',
+    typeLabel: '',
+    target: ''
+  })
 
-const redeemDialog = reactive({
-  visible: false,
-  submitting: false,
-  cardCode: ''
-})
-const redeemResult = reactive({
-  visible: false,
-  licenseNo: '',
-  appName: '',
-  planName: '',
-  type: '',
-  typeLabel: '',
-  licenseKey: '',
-  expireAt: '',
-  idempotent: false
-})
+  const siteDialog = reactive({
+    visible: false,
+    loading: false,
+    licenseId: 0,
+    licenseNo: '',
+    maxSites: 0,
+    list: [] as any[]
+  })
 
-type TagType = 'primary' | 'success' | 'warning' | 'info' | 'danger'
-const typeTagMap: Record<string, TagType | undefined> = {
-  domain: undefined,
-  wildcard: 'success',
-  ip: 'warning',
-  key: 'info'
-}
-const statusTagMap: Record<string, TagType | undefined> = {
-  active: 'success',
-  expiring: 'warning',
-  expired: 'info'
-}
-const editableTargetTypes = new Set(['domain', 'wildcard', 'ip', 'key'])
-const targetLabel = computed(() => {
-  if (editDialog.type === 'ip') return 'IP'
-  if (editDialog.type === 'key') return '授权密钥'
-  if (editDialog.type === 'wildcard') return '泛域名'
-  return '域名'
-})
-const targetPlaceholder = computed(() => `请输入${targetLabel.value}`)
+  const redeemDialog = reactive({
+    visible: false,
+    submitting: false,
+    cardCode: ''
+  })
+  const redeemResult = reactive({
+    visible: false,
+    licenseNo: '',
+    appName: '',
+    planName: '',
+    type: '',
+    typeLabel: '',
+    licenseKey: '',
+    expireAt: '',
+    idempotent: false
+  })
 
-function getToken() {
-  const stored = localStorage.getItem('user_panel_token')
-  return stored || ''
-}
-
-async function fetchApps() {
-  try {
-    const { data } = await axios.get('/api/user-panel/apps', {
-      headers: { Authorization: `Bearer ${getToken()}` }
-    })
-    if (data.code === 200) appList.value = data.data || []
-  } catch {
-    ElMessage.error('加载应用列表失败')
+  type TagType = 'primary' | 'success' | 'warning' | 'info' | 'danger'
+  const typeTagMap: Record<string, TagType | undefined> = {
+    domain: undefined,
+    wildcard: 'success',
+    ip: 'warning',
+    key: 'info'
   }
-}
+  const statusTagMap: Record<string, TagType | undefined> = {
+    active: 'success',
+    expiring: 'warning',
+    expired: 'info'
+  }
+  const editableTargetTypes = new Set(['domain', 'wildcard', 'ip', 'key'])
+  const targetLabel = computed(() => {
+    if (editDialog.type === 'ip') return 'IP'
+    if (editDialog.type === 'key') return '授权密钥'
+    if (editDialog.type === 'wildcard') return '泛域名'
+    return '域名'
+  })
+  const targetPlaceholder = computed(() => `请输入${targetLabel.value}`)
 
-async function fetchList() {
-  loading.value = true
-  try {
-    const { data } = await axios.get('/api/user-panel/licenses', {
-      headers: { Authorization: `Bearer ${getToken()}` },
-      params: {
-        keyword: searchForm.keyword || undefined,
-        appId: searchForm.appId || undefined,
-        status: searchForm.status || undefined,
-        page: pagination.page,
-        pageSize: pagination.pageSize
+  function getToken() {
+    const stored = localStorage.getItem('user_panel_token')
+    return stored || ''
+  }
+
+  async function fetchApps() {
+    try {
+      const { data } = await axios.get('/api/user-panel/apps', {
+        headers: { Authorization: `Bearer ${getToken()}` }
+      })
+      if (data.code === 200) appList.value = data.data || []
+    } catch {
+      ElMessage.error('加载应用列表失败')
+    }
+  }
+
+  async function fetchList() {
+    loading.value = true
+    try {
+      const { data } = await axios.get('/api/user-panel/licenses', {
+        headers: { Authorization: `Bearer ${getToken()}` },
+        params: {
+          keyword: searchForm.keyword || undefined,
+          appId: searchForm.appId || undefined,
+          status: searchForm.status || undefined,
+          page: pagination.page,
+          pageSize: pagination.pageSize
+        }
+      })
+      if (data.code === 200) {
+        tableData.value = data.data.list || []
+        pagination.total = data.data.total || 0
       }
-    })
-    if (data.code === 200) {
-      tableData.value = data.data.list || []
-      pagination.total = data.data.total || 0
+    } catch {
+      ElMessage.error('加载授权列表失败')
+    } finally {
+      loading.value = false
     }
-  } catch {
-    ElMessage.error('加载授权列表失败')
-  } finally {
-    loading.value = false
-  }
-}
-
-function handleSearch() { pagination.page = 1; fetchList() }
-function handleReset() { searchForm.keyword = ''; searchForm.appId = ''; searchForm.status = ''; handleSearch() }
-function canEditTargetType(type: string) { return editableTargetTypes.has(type) }
-function formatLicenseAmount(amount: unknown) {
-  if (amount === null || amount === undefined || amount === '') return '--'
-  return `¥${Number(amount).toFixed(2)}`
-}
-
-function openEditDialog(row: any) {
-  editDialog.id = row.id
-  editDialog.type = row.type
-  editDialog.typeLabel = row.typeLabel
-  editDialog.target = row.domain || ''
-  editDialog.visible = true
-}
-
-async function submitEditTarget() {
-  const target = editDialog.target.trim()
-  if (!target) {
-    ElMessage.warning(`请输入${targetLabel.value}`)
-    return
   }
 
-  editDialog.submitting = true
-  try {
-    const { data } = await axios.put(`/api/user-panel/licenses/${editDialog.id}/target`, { target }, {
-      headers: { Authorization: `Bearer ${getToken()}` }
-    })
-    if (data.code === 200) {
-      ElMessage.success(data.msg || '更新成功')
-      editDialog.visible = false
-      fetchList()
-    } else {
-      ElMessage.error(data.msg || '更新失败')
-    }
-  } catch {
-    ElMessage.error('更新失败')
-  } finally {
-    editDialog.submitting = false
+  function handleSearch() {
+    pagination.page = 1
+    fetchList()
   }
-}
-
-async function resetLicenseKey() {
-  editDialog.refreshing = true
-  try {
-    const { data } = await axios.post(`/api/user-panel/licenses/${editDialog.id}/refresh-key`, {}, {
-      headers: { Authorization: `Bearer ${getToken()}` }
-    })
-    if (data.code === 200) {
-      editDialog.target = data.data?.licenseKey || ''
-      ElMessage.success(data.msg || '密钥已重置')
-      fetchList()
-    } else {
-      ElMessage.error(data.msg || '重置失败')
-    }
-  } catch {
-    ElMessage.error('重置失败')
-  } finally {
-    editDialog.refreshing = false
+  function handleReset() {
+    searchForm.keyword = ''
+    searchForm.appId = ''
+    searchForm.status = ''
+    handleSearch()
   }
-}
-
-function openRedeemDialog() {
-  redeemDialog.cardCode = ''
-  redeemDialog.submitting = false
-  redeemDialog.visible = true
-}
-
-async function submitRedeem() {
-  if (redeemDialog.submitting) return
-  const cardCode = redeemDialog.cardCode.trim()
-  if (!cardCode) {
-    ElMessage.warning('请输入卡密')
-    return
+  function canEditTargetType(type: string) {
+    return editableTargetTypes.has(type)
+  }
+  function formatLicenseAmount(amount: unknown) {
+    if (amount === null || amount === undefined || amount === '') return '--'
+    return `¥${Number(amount).toFixed(2)}`
   }
 
-  redeemDialog.submitting = true
-  try {
-    const { data } = await axios.post('/api/user-panel/cards/redeem', { cardCode }, {
-      headers: { Authorization: `Bearer ${getToken()}` }
-    })
-    if (data.code !== 200) {
-      ElMessage.error(data.msg || '兑换失败')
+  function openEditDialog(row: any) {
+    editDialog.id = row.id
+    editDialog.type = row.type
+    editDialog.typeLabel = row.typeLabel
+    editDialog.target = row.domain || ''
+    editDialog.visible = true
+  }
+
+  async function submitEditTarget() {
+    const target = editDialog.target.trim()
+    if (!target) {
+      ElMessage.warning(`请输入${targetLabel.value}`)
       return
     }
-    redeemDialog.visible = false
-    Object.assign(redeemResult, {
-      ...data.data,
-      visible: true,
-      licenseKey: data.data?.licenseKey || '',
-      idempotent: data.data?.idempotent === true
-    })
-    await fetchList()
-  } catch {
-    ElMessage.error('兑换失败，请稍后重试')
-  } finally {
+
+    editDialog.submitting = true
+    try {
+      const { data } = await axios.put(
+        `/api/user-panel/licenses/${editDialog.id}/target`,
+        { target },
+        {
+          headers: { Authorization: `Bearer ${getToken()}` }
+        }
+      )
+      if (data.code === 200) {
+        ElMessage.success(data.msg || '更新成功')
+        editDialog.visible = false
+        fetchList()
+      } else {
+        ElMessage.error(data.msg || '更新失败')
+      }
+    } catch {
+      ElMessage.error('更新失败')
+    } finally {
+      editDialog.submitting = false
+    }
+  }
+
+  async function resetLicenseKey() {
+    editDialog.refreshing = true
+    try {
+      const { data } = await axios.post(
+        `/api/user-panel/licenses/${editDialog.id}/refresh-key`,
+        {},
+        {
+          headers: { Authorization: `Bearer ${getToken()}` }
+        }
+      )
+      if (data.code === 200) {
+        editDialog.target = data.data?.licenseKey || ''
+        ElMessage.success(data.msg || '密钥已重置')
+        fetchList()
+      } else {
+        ElMessage.error(data.msg || '重置失败')
+      }
+    } catch {
+      ElMessage.error('重置失败')
+    } finally {
+      editDialog.refreshing = false
+    }
+  }
+
+  async function openSiteDialog(row: any) {
+    siteDialog.licenseId = Number(row.id)
+    siteDialog.licenseNo = row.licenseNo || ''
+    siteDialog.maxSites = Number(row.maxSites) || 0
+    siteDialog.visible = true
+    await fetchLicenseSites()
+  }
+
+  async function fetchLicenseSites() {
+    siteDialog.loading = true
+    try {
+      const { data } = await axios.get(`/api/user-panel/licenses/${siteDialog.licenseId}/sites`, {
+        headers: { Authorization: `Bearer ${getToken()}` }
+      })
+      if (data.code === 200) {
+        siteDialog.list = data.data?.list || []
+        if (data.data?.maxSites !== undefined) siteDialog.maxSites = Number(data.data.maxSites)
+      } else {
+        ElMessage.error(data.msg || '加载绑定站点失败')
+      }
+    } catch {
+      ElMessage.error('加载绑定站点失败')
+    } finally {
+      siteDialog.loading = false
+    }
+  }
+
+  async function handleUnbindSite(row: any) {
+    try {
+      await ElMessageBox.confirm(`确定解绑站点「${row.target}」？解绑后名额立即释放。`, '提示', {
+        type: 'warning'
+      })
+      const { data } = await axios.delete(
+        `/api/user-panel/licenses/${siteDialog.licenseId}/sites/${row.id}`,
+        {
+          headers: { Authorization: `Bearer ${getToken()}` }
+        }
+      )
+      if (data.code === 200) {
+        ElMessage.success(data.msg || '解绑成功')
+        await fetchLicenseSites()
+        fetchList()
+      } else {
+        ElMessage.error(data.msg || '解绑失败')
+      }
+    } catch (error) {
+      if (error !== 'cancel' && error !== 'close') {
+        ElMessage.error('解绑失败，请稍后重试')
+      }
+    }
+  }
+
+  function openRedeemDialog() {
+    redeemDialog.cardCode = ''
     redeemDialog.submitting = false
+    redeemDialog.visible = true
   }
-}
 
-async function copyRedeemedKey() {
-  if (!redeemResult.licenseKey) return
-  try {
-    await navigator.clipboard.writeText(redeemResult.licenseKey)
-    ElMessage.success('密钥已复制')
-  } catch {
-    ElMessage.error('复制失败，请手动复制')
+  async function submitRedeem() {
+    if (redeemDialog.submitting) return
+    const cardCode = redeemDialog.cardCode.trim()
+    if (!cardCode) {
+      ElMessage.warning('请输入卡密')
+      return
+    }
+
+    redeemDialog.submitting = true
+    try {
+      const { data } = await axios.post(
+        '/api/user-panel/cards/redeem',
+        { cardCode },
+        {
+          headers: { Authorization: `Bearer ${getToken()}` }
+        }
+      )
+      if (data.code !== 200) {
+        ElMessage.error(data.msg || '兑换失败')
+        return
+      }
+      redeemDialog.visible = false
+      Object.assign(redeemResult, {
+        ...data.data,
+        visible: true,
+        licenseKey: data.data?.licenseKey || '',
+        idempotent: data.data?.idempotent === true
+      })
+      await fetchList()
+    } catch {
+      ElMessage.error('兑换失败，请稍后重试')
+    } finally {
+      redeemDialog.submitting = false
+    }
   }
-}
 
-function closeRedeemResult() {
-  redeemResult.visible = false
-}
+  async function copyRedeemedKey() {
+    if (!redeemResult.licenseKey) return
+    try {
+      await navigator.clipboard.writeText(redeemResult.licenseKey)
+      ElMessage.success('密钥已复制')
+    } catch {
+      ElMessage.error('复制失败，请手动复制')
+    }
+  }
 
-onMounted(() => { fetchApps(); fetchList() })
+  function closeRedeemResult() {
+    redeemResult.visible = false
+  }
+
+  onMounted(() => {
+    fetchApps()
+    fetchList()
+  })
 </script>
 
 <style scoped lang="scss">
-.mb-4 { margin-bottom: 16px; }
-.card-header { display: flex; align-items: center; justify-content: space-between; }
-.card-title { font-weight: 600; }
-.pagination-wrapper { display: flex; justify-content: flex-end; margin-top: 16px; }
-.source-text { font-size: 12px; color: var(--el-text-color-secondary); }
-.target-editor { display: flex; align-items: center; gap: 8px; width: 100%; }
-.target-editor .el-button { flex: 0 0 auto; }
-.target-editor .el-button :deep(.el-icon) { margin-right: 4px; }
-.redeem-alert { margin-bottom: 18px; }
-.redeem-summary { display: grid; gap: 6px; color: var(--el-text-color-regular); }
-.license-key-result { width: 100%; min-width: 360px; }
+  .mb-4 {
+    margin-bottom: 16px;
+  }
+
+  .mb-3 {
+    margin-bottom: 12px;
+  }
+
+  .text-secondary {
+    color: var(--el-text-color-secondary);
+  }
+
+  .card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .card-title {
+    font-weight: 600;
+  }
+
+  .pagination-wrapper {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 16px;
+  }
+
+  .source-text {
+    font-size: 12px;
+    color: var(--el-text-color-secondary);
+  }
+
+  .target-editor {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    width: 100%;
+  }
+
+  .target-editor .el-button {
+    flex: 0 0 auto;
+  }
+
+  .target-editor .el-button :deep(.el-icon) {
+    margin-right: 4px;
+  }
+
+  .redeem-alert {
+    margin-bottom: 18px;
+  }
+
+  .redeem-summary {
+    display: grid;
+    gap: 6px;
+    color: var(--el-text-color-regular);
+  }
+
+  .license-key-result {
+    width: 100%;
+    min-width: 360px;
+  }
 </style>

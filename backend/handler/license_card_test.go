@@ -38,6 +38,7 @@ type licenseCardTestState struct {
 	planName       string
 	licenseType    string
 	durationDays   int
+	maxSites       int
 	price          float64
 	licenseInserts int
 	license        licenseCardTestLicense
@@ -65,6 +66,7 @@ type licenseCardTestLicense struct {
 	ownerType    string
 	ownerID      int64
 	durationDays int
+	maxSites     int
 	startedAt    time.Time
 	expiredAt    *time.Time
 	licenseKey   string
@@ -136,11 +138,11 @@ func (conn *licenseCardTestConn) QueryContext(_ context.Context, query string, a
 			licenseID = conn.state.licenseID
 		}
 		return &licenseCardTestRows{
-			columns: []string{"card_id", "batch_id", "card_status", "redeemed_type", "redeemed_id", "license_id", "batch_status", "app_id", "plan_id", "app_name", "plan_name", "duration_days", "price", "license_type", "app_enabled"},
+			columns: []string{"card_id", "batch_id", "card_status", "redeemed_type", "redeemed_id", "license_id", "batch_status", "app_id", "plan_id", "app_name", "plan_name", "duration_days", "max_sites_snapshot", "price", "license_type", "app_enabled"},
 			values: [][]driver.Value{{
 				int64(1), int64(2), conn.state.cardStatus, conn.state.redeemedType, redeemedID,
 				licenseID, conn.state.batchStatus, int64(3), int64(4), conn.state.appName,
-				conn.state.planName, int64(conn.state.durationDays), conn.state.price,
+				conn.state.planName, int64(conn.state.durationDays), int64(conn.state.maxSites), conn.state.price,
 				conn.state.licenseType, conn.state.appEnabled,
 			}},
 		}, nil
@@ -251,7 +253,7 @@ func (conn *licenseCardTestConn) ExecContext(_ context.Context, query string, ar
 
 	switch {
 	case strings.Contains(query, "INSERT INTO licenses"):
-		if len(args) != 12 {
+		if len(args) != 13 {
 			return nil, errors.New("unexpected license argument count")
 		}
 		conn.state.licenseInserts++
@@ -268,6 +270,7 @@ func (conn *licenseCardTestConn) ExecContext(_ context.Context, query string, ar
 			durationDays: int(args[7].Value.(int64)),
 			startedAt:    args[8].Value.(time.Time),
 			licenseKey:   args[10].Value.(string),
+			maxSites:     int(args[11].Value.(int64)),
 		}
 		if value, ok := args[9].Value.(time.Time); ok {
 			license.expiredAt = &value
@@ -404,7 +407,7 @@ func TestRedeemLicenseCardCreatesSnapshotLicense(t *testing.T) {
 			if inserts != 1 || license.ownerType != test.ownerType || license.ownerID != test.ownerID {
 				t.Fatalf("license ownership/inserts invalid: inserts=%d license=%#v", inserts, license)
 			}
-			if license.appID != 3 || license.planID != 4 || license.price != state.price || license.durationDays != state.durationDays {
+			if license.appID != 3 || license.planID != 4 || license.price != state.price || license.durationDays != state.durationDays || license.maxSites != state.maxSites {
 				t.Fatalf("license snapshot invalid: %#v", license)
 			}
 			if license.expiredAt == nil {

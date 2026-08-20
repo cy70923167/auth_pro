@@ -30,6 +30,7 @@ type purchasePlanPricing struct {
 	AppName      string
 	PlanName     string
 	DurationDays int
+	MaxSites     int
 	PriceCents   int64
 	LicenseType  string
 }
@@ -96,6 +97,7 @@ type purchaseOrderSnapshot struct {
 	AppName         string
 	PlanName        string
 	DurationDays    int
+	MaxSites        int
 }
 
 func parsePurchaseAudience(value string) (purchaseAudience, error) {
@@ -171,11 +173,11 @@ func loadPurchasePlanPricing(db *sql.DB, appID, planID int64) (purchasePlanPrici
 	var price float64
 	var licenseType sql.NullString
 	err := db.QueryRow(`
-		SELECT a.app_name, p.name, p.license_type, p.price, p.duration_days
+		SELECT a.app_name, p.name, p.license_type, p.price, p.duration_days, COALESCE(p.max_sites, 0)
 		FROM license_plans p
 		JOIN apps a ON a.id = p.app_id
 		WHERE p.id = ? AND p.app_id = ? AND p.enabled = 1 AND a.enabled = 1
-	`, planID, appID).Scan(&plan.AppName, &plan.PlanName, &licenseType, &price, &plan.DurationDays)
+	`, planID, appID).Scan(&plan.AppName, &plan.PlanName, &licenseType, &price, &plan.DurationDays, &plan.MaxSites)
 	if err != nil {
 		return purchasePlanPricing{}, err
 	}
@@ -405,6 +407,7 @@ func newPurchaseOrderSnapshot(plan purchasePlanPricing, quote purchasePriceQuote
 		AppName:         plan.AppName,
 		PlanName:        plan.PlanName,
 		DurationDays:    plan.DurationDays,
+		MaxSites:        plan.MaxSites,
 	}
 	if quote.PromotionID > 0 {
 		snapshot.PromotionID = quote.PromotionID

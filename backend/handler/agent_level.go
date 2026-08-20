@@ -1,7 +1,10 @@
 package handler
 
 import (
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"math"
 	"net/http"
@@ -12,7 +15,7 @@ import (
 	"auto_pro/config"
 
 	"github.com/gin-gonic/gin"
-	_ "github.com/go-sql-driver/mysql"
+	"github.com/go-sql-driver/mysql"
 )
 
 func ensureAgentLevelSchema(db *sql.DB) error {
@@ -144,25 +147,23 @@ func resolveAgentDiscount(db *sql.DB, level string, requested float64) (float64,
 	return requested, ""
 }
 
-func validateAgentLevelPayload(code, name string, discount float64) string {
-	code = strings.TrimSpace(code)
+func validateAgentLevelPayload(name string, discount float64) string {
 	name = strings.TrimSpace(name)
-	if code == "" || name == "" {
-		return "请填写等级编码和名称"
-	}
-	if len(code) < 2 || len(code) > 50 {
-		return "等级编码长度需为 2-50 位"
-	}
-	for _, ch := range code {
-		if (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_' || ch == '-' {
-			continue
-		}
-		return "等级编码仅支持字母、数字、下划线和中划线"
+	if name == "" {
+		return "请填写等级名称"
 	}
 	if discount < 1 || discount > 10 {
 		return "折扣需在 1-10 之间"
 	}
 	return ""
+}
+
+func generateAgentLevelCode() (string, error) {
+	value := make([]byte, 12)
+	if _, err := rand.Read(value); err != nil {
+		return "", err
+	}
+	return "level_" + hex.EncodeToString(value), nil
 }
 
 const maxAgentLevelMoneyCents int64 = 999999999999
@@ -317,7 +318,6 @@ func AgentLevelSelectList(c *gin.Context) {
 // AgentLevelCreate 新增代理商等级
 func AgentLevelCreate(c *gin.Context) {
 	var req struct {
-		Code               string  `json:"code"`
 		Name               string  `json:"name"`
 		Discount           float64 `json:"discount"`
 		SelfServiceEnabled bool    `json:"selfServiceEnabled"`
@@ -332,7 +332,7 @@ func AgentLevelCreate(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"code": 400, "msg": "参数错误"})
 		return
 	}
-	if msg := validateAgentLevelPayload(req.Code, req.Name, req.Discount); msg != "" {
+	if msg := validateAgentLevelPayload(req.Name, req.Discount); msg != "" {
 		c.JSON(http.StatusOK, gin.H{"code": 400, "msg": msg})
 		return
 	}
@@ -348,17 +348,29 @@ func AgentLevelCreate(c *gin.Context) {
 	}
 	defer db.Close()
 
-	_, err := db.Exec(`
-		INSERT INTO agent_levels (
-			code, name, discount, self_service_enabled, upgrade_price, opening_bonus, benefits, sort, enabled, remark
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, strings.TrimSpace(req.Code), strings.TrimSpace(req.Name), req.Discount, req.SelfServiceEnabled,
-		formatCents(priceCents), formatCents(bonusCents), strings.TrimSpace(req.Benefits), req.Sort, req.Enabled, strings.TrimSpace(req.Remark))
-	if err != nil {
-		c.JSON(http.StatusOK, gin.H{"code": 500, "msg": "创建失败: " + err.Error()})
-		return
+	for attempt := 0; attempt < 3; attempt++ {
+		code, err := generateAgentLevelCode()
+		if err != nil {
+			c.JSON(http.StatusOK, gin.H{"code": 500, "msg": "生成等级编码失败"})
+			return
+		}
+		_, err = db.Exec(`
+			INSERT INTO agent_levels (
+				code, name, discount, self_service_enabled, upgrade_price, opening_bonus, benefits, sort, enabled, remark
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`, code, strings.TrimSpace(req.Name), req.Discount, req.SelfServiceEnabled,
+			formatCents(priceCents), formatCents(bonusCents), strings.TrimSpace(req.Benefits), req.Sort, req.Enabled, strings.TrimSpace(req.Remark))
+		if err == nil {
+			c.JSON(http.StatusOK, gin.H{"code": 200, "msg": "创建成功"})
+			return
+		}
+		var mysqlErr *mysql.MySQLError
+		if !errors.As(err, &mysqlErr) || mysqlErr.Number != 1062 {
+			c.JSON(http.StatusOK, gin.H{"code": 500, "msg": "创建失败: " + err.Error()})
+			return
+		}
 	}
-	c.JSON(http.StatusOK, gin.H{"code": 200, "msg": "创建成功"})
+	c.JSON(http.StatusOK, gin.H{"code": 500, "msg": "生成唯一等级编码失败，请重试"})
 }
 
 // AgentLevelUpdate 编辑代理商等级

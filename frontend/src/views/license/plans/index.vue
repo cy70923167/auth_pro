@@ -54,6 +54,12 @@
         <el-table-column prop="price" label="价格" width="120">
           <template #default="{ row }">¥{{ Number(row.price || 0).toFixed(2) }}</template>
         </el-table-column>
+        <el-table-column label="最大站点数" width="110" align="center">
+          <template #default="{ row }">
+            <span v-if="row.licenseType === 'key'">{{ Number(row.maxSites || 0) || '不限' }}</span>
+            <span v-else class="text-secondary">--</span>
+          </template>
+        </el-table-column>
         <el-table-column prop="sort" label="排序" width="80" align="center" />
         <el-table-column prop="enabled" label="状态" width="90">
           <template #default="{ row }">
@@ -107,7 +113,7 @@
               :value="licenseType"
             />
           </el-select>
-          <div class="form-tip" style="margin-left: 0; margin-top: 4px">{{ licenseTypeTip }}</div>
+          <div class="form-tip" style="margin-top: 4px; margin-left: 0">{{ licenseTypeTip }}</div>
         </el-form-item>
         <el-form-item label="快捷时长">
           <el-space wrap>
@@ -135,6 +141,16 @@
             :step="10"
             controls-position="right"
           />
+        </el-form-item>
+        <el-form-item v-if="formData.licenseType === 'key'" label="最大站点数">
+          <el-input-number
+            v-model="formData.maxSites"
+            :min="0"
+            :precision="0"
+            :step="1"
+            controls-position="right"
+          />
+          <span class="form-tip">0 表示不限制</span>
         </el-form-item>
         <el-form-item label="排序">
           <el-input-number
@@ -183,6 +199,7 @@
     licenseType: '',
     durationDays: 30,
     price: 0,
+    maxSites: 0,
     sort: 0,
     enabled: true,
     remark: ''
@@ -253,6 +270,7 @@
       licenseType: '',
       durationDays: 30,
       price: 0,
+      maxSites: 0,
       sort: 0,
       enabled: true,
       remark: ''
@@ -286,6 +304,7 @@
       licenseType: row.licenseType || '',
       durationDays: row.durationDays,
       price: Number(row.price || 0),
+      maxSites: Number(row.maxSites || 0),
       sort: row.sort || 0,
       enabled: row.enabled,
       remark: row.remark || ''
@@ -304,6 +323,7 @@
       licenseType: formData.licenseType,
       durationDays: formData.durationDays,
       price: formData.price,
+      maxSites: formData.maxSites,
       sort: formData.sort,
       enabled: formData.enabled,
       remark: formData.remark
@@ -357,20 +377,20 @@
 
     .search-bar {
       display: flex;
+      flex-wrap: wrap;
       gap: 12px;
       margin-bottom: 16px;
-      flex-wrap: wrap;
     }
 
     .form-tip {
       margin-left: 12px;
-      color: var(--el-text-color-secondary);
       font-size: 12px;
+      color: var(--el-text-color-secondary);
     }
 
     .text-secondary {
-      color: var(--el-text-color-secondary);
       font-size: 13px;
+      color: var(--el-text-color-secondary);
     }
   }
 </style>

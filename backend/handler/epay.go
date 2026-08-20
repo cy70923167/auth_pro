@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"math"
 	"net/http"
 	"net/url"
@@ -1110,8 +1111,12 @@ func ensureColumn(db *sql.DB, table string, column string, ddl string) error {
 
 func ensureIndex(db *sql.DB, table string, preferredName string, columns []string, unique bool) error {
 	exists, err := indexWithColumnsExists(db, table, columns, unique)
-	if err != nil || exists {
+	if err != nil {
+		log.Printf("[ensureIndex] indexWithColumnsExists(%s.%s, %v, unique=%v) 查询失败: %v", table, preferredName, columns, unique, err)
 		return err
+	}
+	if exists {
+		return nil
 	}
 
 	for attempt := 0; attempt < 8; attempt++ {
@@ -1122,19 +1127,22 @@ func ensureIndex(db *sql.DB, table string, preferredName string, columns []strin
 
 		nameExists, err := indexNameExists(db, table, indexName)
 		if err != nil {
+			log.Printf("[ensureIndex] indexNameExists(%s.%s) 查询失败: %v", table, indexName, err)
 			return err
 		}
 		if nameExists {
 			continue
 		}
 
-		_, err = db.Exec(buildAddIndexDDL(table, indexName, columns, unique))
+		ddl := buildAddIndexDDL(table, indexName, columns, unique)
+		_, err = db.Exec(ddl)
 		if err == nil {
 			return nil
 		}
 		if strings.Contains(strings.ToLower(err.Error()), "duplicate key name") {
 			continue
 		}
+		log.Printf("[ensureIndex] 执行 DDL 失败: %s | 错误: %v", ddl, err)
 		return err
 	}
 
@@ -1153,7 +1161,7 @@ func indexWithColumnsExists(db *sql.DB, table string, columns []string, unique b
 	}
 
 	var exists int
-	if err := db.QueryRow(`
+	query := `
 		SELECT COUNT(*) FROM (
 			SELECT INDEX_NAME, NON_UNIQUE, GROUP_CONCAT(COLUMN_NAME ORDER BY SEQ_IN_INDEX SEPARATOR ',') AS col_names
 			FROM information_schema.STATISTICS
@@ -1161,7 +1169,9 @@ func indexWithColumnsExists(db *sql.DB, table string, columns []string, unique b
 			GROUP BY INDEX_NAME, NON_UNIQUE
 			HAVING col_names = ? AND (? = 0 OR NON_UNIQUE = 0)
 		) matched
-	`, table, columnList, requireUnique).Scan(&exists); err != nil {
+	`
+	if err := db.QueryRow(query, table, columnList, requireUnique).Scan(&exists); err != nil {
+		log.Printf("[indexWithColumnsExists] 查询失败 table=%s columns=%v unique=%v | 错误: %v", table, columns, unique, err)
 		return false, err
 	}
 	return exists > 0, nil

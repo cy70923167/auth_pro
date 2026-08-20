@@ -123,9 +123,10 @@ func AdminUserList(c *gin.Context) {
 // AdminUserCreate 管理端-创建用户
 func AdminUserCreate(c *gin.Context) {
 	type createReq struct {
-		Email    string `json:"email" binding:"required,email"`
-		Nickname string `json:"nickname" binding:"required"`
-		Password string `json:"password" binding:"required,min=6"`
+		Email    string   `json:"email" binding:"required,email"`
+		Nickname string   `json:"nickname" binding:"required"`
+		Password string   `json:"password" binding:"required,min=6"`
+		Balance  *float64 `json:"balance"`
 	}
 	var req createReq
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -149,8 +150,14 @@ func AdminUserCreate(c *gin.Context) {
 	}
 
 	hash, _ := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
-	_, err = db.Exec("INSERT INTO users (email, password_hash, nickname) VALUES (?, ?, ?)",
-		req.Email, string(hash), req.Nickname)
+	
+	balance := 0.0
+	if req.Balance != nil {
+		balance = *req.Balance
+	}
+	
+	_, err = db.Exec("INSERT INTO users (email, password_hash, nickname, balance) VALUES (?, ?, ?, ?)",
+		req.Email, string(hash), req.Nickname, balance)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{"code": 500, "msg": "创建失败"})
 		return

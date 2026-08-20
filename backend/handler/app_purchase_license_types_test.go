@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -82,6 +83,11 @@ func (conn *purchaseLicenseTypeTestConn) QueryContext(_ context.Context, query s
 			columns: []string{"count"},
 			values:  [][]driver.Value{{int64(1)}},
 		}, nil
+	case strings.Contains(query, "information_schema.STATISTICS"):
+		return &purchaseLicenseTypeTestRows{
+			columns: []string{"count"},
+			values:  [][]driver.Value{{int64(1)}},
+		}, nil
 	case strings.Contains(query, "SELECT purchase_license_type_mask"):
 		if !conn.state.appExists {
 			return &purchaseLicenseTypeTestRows{columns: []string{"purchase_license_type_mask"}}, nil
@@ -104,32 +110,32 @@ func (conn *purchaseLicenseTypeTestConn) QueryContext(_ context.Context, query s
 			status = "pending"
 		}
 		return &purchaseLicenseTypeTestRows{
-			columns: []string{"id", "agent_id", "owner_type", "owner_id", "app_id", "plan_id", "type", "target", "amount", "original_amount", "status", "app_name_snapshot", "plan_name_snapshot", "duration_days_snapshot", "pay_channel", "pay_method", "gateway_trade_no"},
-			values:  [][]driver.Value{{int64(1), int64(7), "user", int64(42), int64(9), int64(3), "key", "", "10.00", "20.00", status, "Test App", "Test Plan", int64(30), payChannel, payMethod, conn.state.purchaseTradeNo}},
+			columns: []string{"id", "agent_id", "owner_type", "owner_id", "app_id", "plan_id", "type", "target", "amount", "original_amount", "status", "app_name_snapshot", "plan_name_snapshot", "duration_days_snapshot", "max_sites_snapshot", "pay_channel", "pay_method", "gateway_trade_no"},
+			values:  [][]driver.Value{{int64(1), int64(7), "user", int64(42), int64(9), int64(3), "key", "", "10.00", "20.00", status, "Test App", "Test Plan", int64(30), int64(5), payChannel, payMethod, conn.state.purchaseTradeNo}},
 		}, nil
 	case strings.Contains(query, "SELECT a.app_name, p.name, p.duration_days"):
 		return &purchaseLicenseTypeTestRows{
-			columns: []string{"app_name", "name", "duration_days"},
-			values:  [][]driver.Value{{"Test App", "Test Plan", int64(30)}},
+			columns: []string{"app_name", "name", "duration_days", "max_sites"},
+			values:  [][]driver.Value{{"Test App", "Test Plan", int64(30), int64(5)}},
 		}, nil
 	case strings.Contains(query, "SELECT p.duration_days, p.price"):
 		return &purchaseLicenseTypeTestRows{
-			columns: []string{"duration_days", "price"},
-			values:  [][]driver.Value{{int64(30), float64(10)}},
+			columns: []string{"duration_days", "price", "max_sites"},
+			values:  [][]driver.Value{{int64(30), float64(10), int64(5)}},
 		}, nil
 	case strings.Contains(query, "FROM license_plans p") && strings.Contains(query, "JOIN apps a"):
 		return &purchaseLicenseTypeTestRows{
-			columns: []string{"app_name", "name", "price", "duration_days"},
-			values:  [][]driver.Value{{"Test App", "Test Plan", float64(10), int64(30)}},
+			columns: []string{"app_name", "name", "license_type", "price", "duration_days", "max_sites"},
+			values:  [][]driver.Value{{"Test App", "Test Plan", "", float64(10), int64(30), int64(5)}},
 		}, nil
 	case strings.Contains(query, "FROM promotion_campaigns pc") && strings.Contains(query, "JOIN promotion_campaign_plans pcp"):
 		promotion := conn.state.promotion
 		if promotion == nil || len(args) < 3 {
-			return &purchaseLicenseTypeTestRows{columns: []string{"id", "name", "audience", "rule_type", "rule_value"}}, nil
+			return &purchaseLicenseTypeTestRows{columns: []string{"id", "name", "audience", "rule_type", "rule_value", "starts_at", "ends_at"}}, nil
 		}
 		planID, _ := args[1].Value.(int64)
 		if conn.state.promotionPlanIDs != nil && !conn.state.promotionPlanIDs[planID] {
-			return &purchaseLicenseTypeTestRows{columns: []string{"id", "name", "audience", "rule_type", "rule_value"}}, nil
+			return &purchaseLicenseTypeTestRows{columns: []string{"id", "name", "audience", "rule_type", "rule_value", "starts_at", "ends_at"}}, nil
 		}
 		buyer, ok := args[2].Value.(string)
 		if !ok {
@@ -138,7 +144,7 @@ func (conn *purchaseLicenseTypeTestConn) QueryContext(_ context.Context, query s
 			}
 		}
 		if promotion.Audience != purchaseAudienceAll && string(promotion.Audience) != buyer {
-			return &purchaseLicenseTypeTestRows{columns: []string{"id", "name", "audience", "rule_type", "rule_value"}}, nil
+			return &purchaseLicenseTypeTestRows{columns: []string{"id", "name", "audience", "rule_type", "rule_value", "starts_at", "ends_at"}}, nil
 		}
 		ruleType := promotion.RuleType
 		valueUnits := promotion.RuleValueUnits
@@ -146,10 +152,11 @@ func (conn *purchaseLicenseTypeTestConn) QueryContext(_ context.Context, query s
 			ruleType = promotionRuleFixedPrice
 			valueUnits = promotion.AmountCents
 		}
+		now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 		return &purchaseLicenseTypeTestRows{
-			columns: []string{"id", "name", "audience", "rule_type", "rule_value"},
+			columns: []string{"id", "name", "audience", "rule_type", "rule_value", "starts_at", "ends_at"},
 			values: [][]driver.Value{{
-				promotion.ID, promotion.Name, string(promotion.Audience), string(ruleType), promotionRuleValueText(ruleType, valueUnits),
+				promotion.ID, promotion.Name, string(promotion.Audience), string(ruleType), promotionRuleValueText(ruleType, valueUnits), now.Add(-time.Hour), now.Add(time.Hour),
 			}},
 		}, nil
 	case strings.Contains(query, "SELECT CASE") && strings.Contains(query, "FROM agents a"):
@@ -502,7 +509,7 @@ func TestAllowedTypeCreatesOnlinePurchaseOrder(t *testing.T) {
 	if strings.Count(query, "?") != len(args) {
 		t.Fatalf("online order placeholders=%d args=%d", strings.Count(query, "?"), len(args))
 	}
-	if len(args) != 24 || args[9].Value != "8.00" || args[10].Value != "20.00" || args[11].Value != "10.00" || args[12].Value != "2.00" || args[13].Value != int64(41) || args[14].Value != "代理活动" || args[17].Value != "Test App" || args[18].Value != "Test Plan" || args[19].Value != int64(30) || args[20].Value != payChannelEpayV1 || args[21].Value != "alipay" {
+	if len(args) != 25 || args[9].Value != "8.00" || args[10].Value != "20.00" || args[11].Value != "10.00" || args[12].Value != "2.00" || args[13].Value != int64(41) || args[14].Value != "代理活动" || args[17].Value != "Test App" || args[18].Value != "Test Plan" || args[19].Value != int64(30) || args[20].Value != int64(0) || args[21].Value != payChannelEpayV1 || args[22].Value != "alipay" {
 		t.Fatalf("unexpected online order snapshot args: %#v", args)
 	}
 	var pricing purchasePricingSnapshot
@@ -572,24 +579,27 @@ func TestExistingOnlineOrderSettlesFromSnapshotAfterTypeDisabled(t *testing.T) {
 func TestOnlinePurchaseSettlementRejectsPaymentMismatches(t *testing.T) {
 	tests := []struct {
 		name       string
-		state      purchaseLicenseTypeTestState
+		state      *purchaseLicenseTypeTestState
 		paidCents  int64
 		payChannel string
 		tradeNo    string
 		payMethod  string
 	}{
 		{name: "amount", paidCents: 999, payChannel: payChannelEpayV1, tradeNo: "trade-1", payMethod: "alipay"},
-		{name: "channel", state: purchaseLicenseTypeTestState{purchasePayChannel: payChannelEpayV2}, paidCents: 1000, payChannel: payChannelEpayV1, tradeNo: "trade-1", payMethod: "alipay"},
-		{name: "method", state: purchaseLicenseTypeTestState{purchasePayMethod: "wxpay"}, paidCents: 1000, payChannel: payChannelEpayV1, tradeNo: "trade-1", payMethod: "alipay"},
-		{name: "gateway trade", state: purchaseLicenseTypeTestState{purchaseTradeNo: "trade-original"}, paidCents: 1000, payChannel: payChannelEpayV1, tradeNo: "trade-forged", payMethod: "alipay"},
-		{name: "cancelled order", state: purchaseLicenseTypeTestState{purchaseStatus: "cancelled"}, paidCents: 1000, payChannel: payChannelEpayV1, tradeNo: "trade-1", payMethod: "alipay"},
+		{name: "channel", state: &purchaseLicenseTypeTestState{purchasePayChannel: payChannelEpayV2}, paidCents: 1000, payChannel: payChannelEpayV1, tradeNo: "trade-1", payMethod: "alipay"},
+		{name: "method", state: &purchaseLicenseTypeTestState{purchasePayMethod: "wxpay"}, paidCents: 1000, payChannel: payChannelEpayV1, tradeNo: "trade-1", payMethod: "alipay"},
+		{name: "gateway trade", state: &purchaseLicenseTypeTestState{purchaseTradeNo: "trade-original"}, paidCents: 1000, payChannel: payChannelEpayV1, tradeNo: "trade-forged", payMethod: "alipay"},
+		{name: "cancelled order", state: &purchaseLicenseTypeTestState{purchaseStatus: "cancelled"}, paidCents: 1000, payChannel: payChannelEpayV1, tradeNo: "trade-1", payMethod: "alipay"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			state := tt.state
+			if state == nil {
+				state = &purchaseLicenseTypeTestState{}
+			}
 			state.appExists = true
-			db := openPurchaseLicenseTypeTestDB(t, &state)
+			db := openPurchaseLicenseTypeTestDB(t, state)
 			if err := settleLicensePurchaseOrder(db, "LP-existing", tt.paidCents, tt.payChannel, tt.tradeNo, tt.payMethod, "{}"); err == nil {
 				t.Fatal("mismatched purchase callback was accepted")
 			}

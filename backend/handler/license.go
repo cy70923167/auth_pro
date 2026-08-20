@@ -92,7 +92,8 @@ func LicenseList(c *gin.Context) {
 	// 列表
 	offset := (page - 1) * pageSize
 	listSQL := fmt.Sprintf(`
-		SELECT l.id, COALESCE(ld.domain, l.license_key) as domain,
+		SELECT l.id,
+		       CASE WHEN l.type = 'key' THEN l.license_key ELSE COALESCE(MAX(ld.domain), '') END AS domain,
 		       COALESCE(a.app_name, '') as app_name, l.app_id, l.type, l.status,
 		       l.owner_type, l.owner_id,
 		       CASE
@@ -101,13 +102,15 @@ func LicenseList(c *gin.Context) {
 		         ELSE ''
 		       END as owner_name,
 		       l.expired_at, l.remark, l.created_at,
-		       (SELECT COUNT(*) FROM verify_logs v WHERE v.license_id = l.id) as verify_count
+		       (SELECT COUNT(*) FROM verify_logs v WHERE v.license_id = l.id) as verify_count,
+		       COUNT(DISTINCT ld.id) AS bound_sites, COALESCE(l.max_domains, 0) AS max_sites
 		FROM licenses l
 		LEFT JOIN apps a ON a.id = l.app_id
 		LEFT JOIN users u ON l.owner_type = 'user' AND u.id = l.owner_id
 		LEFT JOIN agents ag ON l.owner_type = 'agent' AND ag.id = l.owner_id
 		LEFT JOIN license_domains ld ON ld.license_id = l.id
 		WHERE %s
+		GROUP BY l.id
 		ORDER BY l.created_at DESC
 		LIMIT ? OFFSET ?
 	`, whereSQL)
@@ -137,6 +140,8 @@ func LicenseList(c *gin.Context) {
 		OwnerName   string `json:"ownerName"`
 		ExpireAt    string `json:"expireAt"`
 		VerifyCount int64  `json:"verifyCount"`
+		BoundSites  int64  `json:"boundSites"`
+		MaxSites    int    `json:"maxSites"`
 		CreatedAt   string `json:"createdAt"`
 		Remark      string `json:"remark"`
 	}
@@ -149,7 +154,7 @@ func LicenseList(c *gin.Context) {
 		var remark sql.NullString
 		err := rows.Scan(&item.ID, &item.Domain, &item.AppName, &item.AppID,
 			&item.Type, &item.Status, &item.OwnerType, &item.OwnerID, &item.OwnerName,
-			&expiredAt, &remark, &createdAt, &item.VerifyCount)
+			&expiredAt, &remark, &createdAt, &item.VerifyCount, &item.BoundSites, &item.MaxSites)
 		if err != nil {
 			continue
 		}
@@ -680,10 +685,10 @@ func LicenseCreate(c *gin.Context) {
 
 	result, err := tx.ExecContext(c.Request.Context(), `
 		INSERT INTO licenses (license_no, app_id, plan_id, original_price, type, status, source, owner_type, owner_id,
-		                      issued_by, duration_days, started_at, expired_at, license_key, remark)
-		VALUES (?, ?, ?, ?, ?, 'active', 'admin', ?, ?, ?, ?, ?, ?, ?, ?)
+		                      issued_by, duration_days, started_at, expired_at, license_key, max_domains, remark)
+		VALUES (?, ?, ?, ?, ?, 'active', 'admin', ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`, licenseNo, req.AppID, req.PlanID, plan.OriginalPrice, req.Type, req.OwnerType, req.OwnerID, userID,
-		plan.DurationDays, now, expiredAt, licenseKey, req.Remark)
+		plan.DurationDays, now, expiredAt, licenseKey, plan.MaxSites, req.Remark)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{"code": 500, "msg": "创建授权失败"})
 		return
@@ -722,6 +727,7 @@ func LicenseCreate(c *gin.Context) {
 type adminLicensePlan struct {
 	DurationDays  int
 	OriginalPrice float64
+	MaxSites      int
 }
 
 type licensePlanRowScanner interface {
@@ -733,12 +739,12 @@ type licensePlanQueryFunc func(query string, args ...any) licensePlanRowScanner
 func loadAdminLicensePlan(queryRow licensePlanQueryFunc, appID, planID int64) (adminLicensePlan, string, error) {
 	var plan adminLicensePlan
 	if err := queryRow(`
-		SELECT p.duration_days, p.price
+		SELECT p.duration_days, p.price, COALESCE(p.max_sites, 0)
 		FROM license_plans p
 		JOIN apps a ON a.id = p.app_id
 		WHERE p.id = ? AND p.app_id = ? AND p.enabled = 1 AND a.enabled = 1
 		FOR UPDATE
-	`, planID, appID).Scan(&plan.DurationDays, &plan.OriginalPrice); err != nil {
+	`, planID, appID).Scan(&plan.DurationDays, &plan.OriginalPrice, &plan.MaxSites); err != nil {
 		if err == sql.ErrNoRows {
 			return adminLicensePlan{}, "套餐不存在、已禁用或不属于所选应用", nil
 		}

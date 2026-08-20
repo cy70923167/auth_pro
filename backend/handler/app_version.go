@@ -71,6 +71,7 @@ type appVersionCheckRequest struct {
 	ServerIP       string `json:"serverIp"`
 	LicenseKey     string `json:"licenseKey"`
 	Timestamp      int64  `json:"timestamp" binding:"required"`
+	SignVersion    string `json:"signVersion"`
 	Sign           string `json:"sign" binding:"required"`
 }
 
@@ -670,8 +671,8 @@ func AppVersionCheck(c *gin.Context) {
 	}
 	req.AppKey = strings.TrimSpace(req.AppKey)
 	req.CurrentVersion = strings.TrimSpace(req.CurrentVersion)
-	req.Domain = normalizeLicenseTarget(req.Domain)
-	req.ServerIP = strings.TrimSpace(req.ServerIP)
+	req.Domain = normalizeLicenseDomain(req.Domain)
+	req.ServerIP = normalizeLicenseServerIP(req.ServerIP)
 	req.LicenseKey = strings.TrimSpace(req.LicenseKey)
 	req.Sign = strings.ToLower(strings.TrimSpace(req.Sign))
 	if !validVersion(req.CurrentVersion) {
@@ -715,7 +716,7 @@ func AppVersionCheck(c *gin.Context) {
 		apiError(c, 403, "授权目标不能为空")
 		return
 	}
-	if !appVersionCheckSignValid(req, appSecret) {
+	if _, ok := appVersionCheckSignValid(req, appSecret); !ok {
 		apiError(c, 403, "签名错误")
 		return
 	}
@@ -733,6 +734,13 @@ func AppVersionCheck(c *gin.Context) {
 		if !ok || license.Status == "revoked" || license.Status == "expired" || (license.ExpiredAt.Valid && !license.ExpiredAt.Time.After(time.Now())) {
 			apiError(c, 403, "授权无效或已过期")
 			return
+		}
+		if license.Type == "key" {
+			if siteErr := checkKeyLicenseSite(db, license.ID, req.Domain, req.ServerIP, false); siteErr != nil {
+				_, message := licenseSiteFailure(siteErr)
+				apiError(c, 403, message)
+				return
+			}
 		}
 		if required, verified, verifyErr := userRealnameRequired(db, appID, license.ID); verifyErr == nil && required && !verified {
 			apiError(c, 403, "该应用要求实名认证")
@@ -1115,17 +1123,46 @@ func appVersionCheckTarget(req appVersionCheckRequest) string {
 	return req.ServerIP
 }
 
-func appVersionCheckSignValid(req appVersionCheckRequest, appSecret string) bool {
-	canonical := strings.Join([]string{
+func appVersionCheckV2Canonical(req appVersionCheckRequest) string {
+	return strings.Join([]string{
+		licenseSignVersionV2,
 		req.AppKey,
 		req.CurrentVersion,
-		appVersionCheckTarget(req),
+		req.LicenseKey,
+		normalizeLicenseDomain(req.Domain),
+		normalizeLicenseServerIP(req.ServerIP),
 		strconv.FormatInt(req.Timestamp, 10),
 	}, "\n")
+}
+
+func appVersionCheckV2Sign(canonical, appSecret string) string {
+	mac := hmac.New(sha256.New, []byte(appSecret))
+	_, _ = mac.Write([]byte(canonical))
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+func appVersionCheckSignValid(req appVersionCheckRequest, appSecret string) (string, bool) {
+	requestedVersion := strings.ToLower(strings.TrimSpace(req.SignVersion))
+	var canonical string
+	switch requestedVersion {
+	case "2", licenseSignVersionV2:
+		canonical = appVersionCheckV2Canonical(req)
+		requestedVersion = licenseSignVersionV2
+	case "", "1", licenseSignVersionV1:
+		canonical = strings.Join([]string{
+			req.AppKey,
+			req.CurrentVersion,
+			appVersionCheckTarget(req),
+			strconv.FormatInt(req.Timestamp, 10),
+		}, "\n")
+		requestedVersion = licenseSignVersionV1
+	default:
+		return "", false
+	}
 	mac := hmac.New(sha256.New, []byte(appSecret))
 	_, _ = mac.Write([]byte(canonical))
 	want := hex.EncodeToString(mac.Sum(nil))
-	return hmac.Equal([]byte(req.Sign), []byte(want))
+	return requestedVersion, hmac.Equal([]byte(req.Sign), []byte(want))
 }
 
 type appVersionDownloadClaims struct {

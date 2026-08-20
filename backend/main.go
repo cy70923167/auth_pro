@@ -89,6 +89,8 @@ func main() {
 			agentSecured.POST("/cards/redeem", handler.AgentLicenseCardRedeem)
 			agentSecured.PUT("/licenses/:id", handler.AgentPanelLicenseUpdate)
 			agentSecured.POST("/licenses/:id/refresh-key", handler.AgentPanelLicenseRefreshKey)
+			agentSecured.GET("/licenses/:id/sites", handler.AgentLicenseSiteList)
+			agentSecured.DELETE("/licenses/:id/sites/:siteId", handler.AgentLicenseSiteUnbind)
 			agentSecured.GET("/balance", handler.AgentPanelBalance)
 			agentSecured.GET("/profile", handler.AgentPanelProfile)
 			agentSecured.PUT("/profile", handler.AgentPanelUpdateProfile)
@@ -132,6 +134,8 @@ func main() {
 			userSecured.POST("/cards/redeem", handler.UserLicenseCardRedeem)
 			userSecured.PUT("/licenses/:id/target", handler.UserLicenseUpdateTarget)
 			userSecured.POST("/licenses/:id/refresh-key", handler.UserLicenseRefreshKey)
+			userSecured.GET("/licenses/:id/sites", handler.UserLicenseSiteList)
+			userSecured.DELETE("/licenses/:id/sites/:siteId", handler.UserLicenseSiteUnbind)
 			userSecured.GET("/apps", handler.UserAppList)
 			userSecured.GET("/apps/purchase", handler.UserAppListForPurchase)
 			userSecured.GET("/balance", handler.UserGetBalance)
@@ -213,6 +217,8 @@ func main() {
 			secured.GET("/dashboard/activities", handler.AdminDashboardActivities)
 			secured.GET("/dashboard/quick-entries", handler.AdminDashboardQuickEntries)
 			secured.GET("/license/list", handler.LicenseList)
+			secured.GET("/license/:id/sites", handler.AdminLicenseSiteList)
+			secured.DELETE("/license/:id/sites/:siteId", handler.AdminLicenseSiteUnbind)
 			secured.GET("/license/query-by-user", handler.UserLicenseQuery)
 			secured.GET("/license/cards/batches", handler.AdminLicenseCardBatchList)
 			secured.POST("/license/cards/batches", handler.AdminLicenseCardBatchCreate)
@@ -259,10 +265,10 @@ func main() {
 			secured.POST("/agent-level/create", handler.AgentLevelCreate)
 			secured.PUT("/agent-level/:id", handler.AgentLevelUpdate)
 			secured.DELETE("/agent-level/:id", handler.AgentLevelDelete)
-			secured.GET("/agent-upgrade/stats", handler.AdminAgentUpgradeStats)
-			secured.GET("/agent-upgrade/orders", handler.AdminAgentUpgradeOrderList)
-			secured.GET("/agent-upgrade/conversions", handler.AdminAccountConversionList)
-			secured.GET("/agent-upgrade/conversions/:id", handler.AdminAccountConversionDetail)
+			secured.GET("/admin/agent-upgrade/stats", handler.AdminAgentUpgradeStats)
+			secured.GET("/admin/agent-upgrade/orders", handler.AdminAgentUpgradeOrderList)
+			secured.GET("/admin/agent-upgrade/conversions", handler.AdminAccountConversionList)
+			secured.GET("/admin/agent-upgrade/conversions/:id", handler.AdminAccountConversionDetail)
 			secured.GET("/transaction/list", handler.TransactionList)
 			secured.GET("/transaction/stats", handler.TransactionStats)
 			secured.GET("/quota/list", handler.QuotaList)
@@ -389,6 +395,9 @@ func main() {
 		}
 		if err := handler.EnsureAccountUpgradeSchema(db); err != nil {
 			log.Printf("ensure account upgrade schema failed: %v", err)
+		}
+		if err := ensureLicenseSiteLimitSchema(db); err != nil {
+			log.Printf("ensure license site limit schema failed: %v", err)
 		}
 		handler.BackfillLicensePurchaseTransactions(db)
 	}()

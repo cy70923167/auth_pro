@@ -341,12 +341,17 @@
   }
 
   function getDefaultLevel() {
-    return levelOptions.value[0]?.code || 'bronze'
+    return levelOptions.value[0]?.code || ''
   }
 
-  function handleAdd() {
+  async function handleAdd() {
     isEdit.value = false
+    await fetchLevelOptions()
     const defaultLevel = getDefaultLevel()
+    if (!defaultLevel) {
+      ElMessage.warning('暂无可用代理商等级，请先新增并启用等级')
+      return
+    }
     Object.assign(formData, {
       id: 0,
       name: '',

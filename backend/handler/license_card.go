@@ -84,6 +84,7 @@ func ensureLicenseCardSchema(db *sql.DB) error {
 			app_name_snapshot VARCHAR(100) NOT NULL,
 			plan_name_snapshot VARCHAR(100) NOT NULL,
 			duration_days INT UNSIGNED NOT NULL DEFAULT 0,
+			max_sites_snapshot INT UNSIGNED NOT NULL DEFAULT 0,
 			price_snapshot DECIMAL(12,2) NOT NULL DEFAULT 0.00,
 			license_type ENUM('domain','wildcard','ip','key') NOT NULL,
 			total_count INT UNSIGNED NOT NULL,
@@ -120,6 +121,10 @@ func ensureLicenseCardSchema(db *sql.DB) error {
 		if _, err := db.Exec(statement); err != nil {
 			return err
 		}
+	}
+	if err := ensureColumn(db, "license_card_batches", "max_sites_snapshot",
+		"ALTER TABLE license_card_batches ADD COLUMN max_sites_snapshot INT UNSIGNED NOT NULL DEFAULT 0 COMMENT '密钥授权最大站点数快照，0表示不限' AFTER duration_days"); err != nil {
+		return err
 	}
 
 	var sourceType string
@@ -201,6 +206,7 @@ type licenseCardBatchSnapshot struct {
 	AppName      string
 	PlanName     string
 	DurationDays int
+	MaxSites     int
 	Price        float64
 	TypeMask     uint8
 }
@@ -209,14 +215,14 @@ func loadLicenseCardBatchSnapshot(tx *sql.Tx, appID, planID int64) (licenseCardB
 	var snapshot licenseCardBatchSnapshot
 	var appEnabled, planEnabled bool
 	err := tx.QueryRow(`
-		SELECT a.app_name, p.name, p.duration_days, p.price,
+		SELECT a.app_name, p.name, p.duration_days, COALESCE(p.max_sites, 0), p.price,
 		       a.purchase_license_type_mask, a.enabled, p.enabled
 		FROM apps a
 		JOIN license_plans p ON p.app_id = a.id
 		WHERE a.id = ? AND p.id = ?
 		FOR UPDATE
 	`, appID, planID).Scan(
-		&snapshot.AppName, &snapshot.PlanName, &snapshot.DurationDays, &snapshot.Price,
+		&snapshot.AppName, &snapshot.PlanName, &snapshot.DurationDays, &snapshot.MaxSites, &snapshot.Price,
 		&snapshot.TypeMask, &appEnabled, &planEnabled,
 	)
 	if err != nil {
@@ -368,10 +374,10 @@ func AdminLicenseCardBatchCreate(c *gin.Context) {
 	createdBy, _ := c.Get("user_id")
 	result, err := tx.ExecContext(c.Request.Context(), `
 		INSERT INTO license_card_batches
-		(batch_no, app_id, plan_id, app_name_snapshot, plan_name_snapshot, duration_days,
+		(batch_no, app_id, plan_id, app_name_snapshot, plan_name_snapshot, duration_days, max_sites_snapshot,
 		 price_snapshot, license_type, total_count, status, remark, created_by)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
-	`, batchNo, req.AppID, req.PlanID, snapshot.AppName, snapshot.PlanName, snapshot.DurationDays,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
+	`, batchNo, req.AppID, req.PlanID, snapshot.AppName, snapshot.PlanName, snapshot.DurationDays, snapshot.MaxSites,
 		snapshot.Price, req.Type, req.Quantity, strings.TrimSpace(req.Remark), createdBy)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{"code": 500, "msg": "创建卡密批次失败: " + err.Error()})
@@ -693,20 +699,20 @@ func redeemLicenseCard(db *sql.DB, cardCode, ownerType string, ownerID int64) (l
 	var cardID, batchID, appID, planID int64
 	var cardStatus, redeemedType, batchStatus, appName, planName, licenseType string
 	var redeemedID, existingLicenseID sql.NullInt64
-	var durationDays int
+	var durationDays, maxSites int
 	var price float64
 	var appEnabled bool
 	err = tx.QueryRow(`
 		SELECT c.id, c.batch_id, c.status, COALESCE(c.redeemed_by_type, ''), c.redeemed_by_id, c.license_id,
 		       b.status, b.app_id, b.plan_id, b.app_name_snapshot, b.plan_name_snapshot,
-		       b.duration_days, b.price_snapshot, b.license_type, a.enabled
+		       b.duration_days, b.max_sites_snapshot, b.price_snapshot, b.license_type, a.enabled
 		FROM license_cards c
 		JOIN license_card_batches b ON b.id = c.batch_id
 		JOIN apps a ON a.id = b.app_id
 		WHERE c.card_code = ?
 		FOR UPDATE
 	`, cardCode).Scan(&cardID, &batchID, &cardStatus, &redeemedType, &redeemedID, &existingLicenseID,
-		&batchStatus, &appID, &planID, &appName, &planName, &durationDays, &price, &licenseType, &appEnabled)
+		&batchStatus, &appID, &planID, &appName, &planName, &durationDays, &maxSites, &price, &licenseType, &appEnabled)
 	if err == sql.ErrNoRows {
 		return licenseCardRedemption{}, "卡密无效或不可用", nil
 	}
@@ -760,9 +766,9 @@ func redeemLicenseCard(db *sql.DB, cardCode, ownerType string, ownerID int64) (l
 	result, err := tx.Exec(`
 		INSERT INTO licenses
 		(license_no, app_id, plan_id, original_price, type, status, source, owner_type, owner_id,
-		 duration_days, started_at, expired_at, license_key, remark)
-		VALUES (?, ?, ?, ?, ?, 'active', 'card', ?, ?, ?, ?, ?, ?, ?)
-	`, licenseNo, appID, planID, price, licenseType, ownerType, ownerID, durationDays, now, expiredAt, licenseKey,
+		 duration_days, started_at, expired_at, license_key, max_domains, remark)
+		VALUES (?, ?, ?, ?, ?, 'active', 'card', ?, ?, ?, ?, ?, ?, ?, ?)
+	`, licenseNo, appID, planID, price, licenseType, ownerType, ownerID, durationDays, now, expiredAt, licenseKey, maxSites,
 		fmt.Sprintf("卡密兑换，批次ID：%d", batchID))
 	if err != nil {
 		return licenseCardRedemption{}, "", err

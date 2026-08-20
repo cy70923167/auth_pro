@@ -511,7 +511,7 @@
   }
 
   async function loadStats() {
-    const data = await request.get<UpgradeStats>({ url: '/api/agent-upgrade/stats' })
+    const data = await request.get<UpgradeStats>({ url: '/api/admin/agent-upgrade/stats' })
     Object.assign(stats, emptyStats, data || {})
   }
 
@@ -519,7 +519,7 @@
     orderLoading.value = true
     try {
       const data = await request.get<{ list: UpgradeOrder[]; total: number }>({
-        url: '/api/agent-upgrade/orders',
+        url: '/api/admin/agent-upgrade/orders',
         params: orderSearch
       })
       orders.value = data.list || []
@@ -533,7 +533,7 @@
     conversionLoading.value = true
     try {
       const data = await request.get<{ list: AccountConversion[]; total: number }>({
-        url: '/api/agent-upgrade/conversions',
+        url: '/api/admin/agent-upgrade/conversions',
         params: conversionSearch
       })
       conversions.value = data.list || []
@@ -624,15 +624,19 @@
     &.primary {
       border-left-color: var(--el-color-primary);
     }
+
     &.success {
       border-left-color: var(--el-color-success);
     }
+
     &.warning {
       border-left-color: var(--el-color-warning);
     }
+
     &.danger {
       border-left-color: var(--el-color-danger);
     }
+
     &.info {
       border-left-color: var(--el-color-info);
     }

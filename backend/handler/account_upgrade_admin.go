@@ -76,7 +76,7 @@ func adminUpgradePagination(c *gin.Context) (int, int, int) {
 }
 
 func openAdminAccountUpgradeDB(c *gin.Context) (*sql.DB, bool) {
-	db, err := openAccountUpgradeDB()
+	db, err := openAccountUpgradeConnection()
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{"code": 500, "msg": "代理升级审计服务初始化失败"})
 		return nil, false
@@ -203,7 +203,7 @@ func AdminAgentUpgradeOrderList(c *gin.Context) {
 		       o.level_id, o.level_code_snapshot, o.level_name_snapshot, o.discount_snapshot,
 		       CAST(o.amount AS CHAR), CAST(o.opening_bonus_snapshot AS CHAR), CAST(o.paid_amount AS CHAR),
 		       o.pay_channel, o.pay_method,
-		       o.status, o.agent_id, COALESCE(a.name, ''), o.gateway_trade_no,
+		       o.status, o.agent_id, COALESCE(a.name, ''), COALESCE(o.gateway_trade_no, ''),
 		       COALESCE(o.error_message, ''), o.created_at, o.paid_at, o.completed_at, o.updated_at
 		FROM agent_upgrade_orders o
 		JOIN users u ON u.id = o.user_id
@@ -232,7 +232,8 @@ func AdminAgentUpgradeOrderList(c *gin.Context) {
 			&item.LevelID, &item.LevelCode, &item.LevelName, &item.Discount, &amount, &openingBonus, &paidAmount,
 			&item.PayChannel, &item.PayMethod, &item.Status, &agentID, &item.AgentName,
 			&item.GatewayTradeNo, &item.ErrorMessage, &createdAt, &paidAt, &completedAt, &updatedAt); err != nil {
-			continue
+			c.JSON(http.StatusOK, gin.H{"code": 500, "msg": "读取升级订单失败: " + err.Error()})
+			return
 		}
 		item.Amount = adminAmountValue(amount)
 		item.OpeningBonus = adminAmountValue(openingBonus)

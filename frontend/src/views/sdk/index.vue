@@ -4,7 +4,9 @@
       <div class="intro-content">
         <div>
           <h2>SDK 接入示例</h2>
-          <p>选择语言后复制示例代码，替换服务地址、appKey、appSecret 和授权目标即可接入授权校验。</p>
+          <p
+            >选择语言后复制示例代码，替换服务地址、appKey、appSecret 和授权目标即可接入授权校验。</p
+          >
         </div>
         <ElTag type="primary" size="large">License SDK</ElTag>
       </div>
@@ -17,9 +19,19 @@
       <ElDescriptions :column="2" border>
         <ElDescriptionsItem label="接口地址">POST /api/license/verify</ElDescriptionsItem>
         <ElDescriptionsItem label="Content-Type">application/json</ElDescriptionsItem>
-        <ElDescriptionsItem label="签名规则">MD5(appKey + target + timestamp + appSecret)</ElDescriptionsItem>
-        <ElDescriptionsItem label="target 取值">优先 licenseKey，其次 domain，最后 serverIp</ElDescriptionsItem>
-        <ElDescriptionsItem label="时间窗口">timestamp 与服务器时间误差需在 10 分钟内</ElDescriptionsItem>
+        <ElDescriptionsItem label="签名规则"
+          >v2 必填：HMAC-SHA256(appSecret, 固定换行规范串)，新增站点绑定必须使用
+          v2</ElDescriptionsItem
+        >
+        <ElDescriptionsItem label="v2 规范串"
+          >"v2\nappKey\nlicenseKey\ndomain\nserverIp\ntimestamp"（空字段保留空行）</ElDescriptionsItem
+        >
+        <ElDescriptionsItem label="v1 兼容"
+          >MD5(appKey + target + timestamp + appSecret) 仅能验证历史已绑定站点</ElDescriptionsItem
+        >
+        <ElDescriptionsItem label="时间窗口"
+          >timestamp 与服务器时间误差需在 10 分钟内</ElDescriptionsItem
+        >
         <ElDescriptionsItem label="通过条件">code = 200 且 data.result = pass</ElDescriptionsItem>
       </ElDescriptions>
     </ElCard>
@@ -60,6 +72,13 @@
       label: 'PHP',
       desc: '适合 PHP Web 项目，在入口文件或核心控制器中调用。',
       code: `<?php
+function v2Sign($appKey, $appSecret, $licenseKey, $domain, $serverIp, $timestamp) {
+    $canonical = implode("\\n", [
+        'v2', $appKey, $licenseKey, $domain, $serverIp, (string)$timestamp,
+    ]);
+    return hash_hmac('sha256', $canonical, $appSecret);
+}
+
 function verifyLicense() {
     $baseUrl = 'https://license.example.com';
     $appKey = 'your_app_key';
@@ -67,9 +86,8 @@ function verifyLicense() {
     $serverIp = $_SERVER['SERVER_ADDR'] ?? '';
     $domain = $_SERVER['HTTP_HOST'] ?? '';
     $licenseKey = '';
-    $target = $licenseKey !== '' ? $licenseKey : ($domain !== '' ? $domain : $serverIp);
     $timestamp = time();
-    $sign = md5($appKey . $target . $timestamp . $appSecret);
+    $sign = v2Sign($appKey, $appSecret, $licenseKey, $domain, $serverIp, $timestamp);
 
     $payload = json_encode([
         'appKey' => $appKey,
@@ -77,6 +95,7 @@ function verifyLicense() {
         'serverIp' => $serverIp,
         'licenseKey' => $licenseKey,
         'timestamp' => $timestamp,
+        'signVersion' => 'v2',
         'sign' => $sign,
     ]);
 
@@ -110,7 +129,8 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
 
 public class LicenseVerifier {
     private static final String BASE_URL = "https://license.example.com";
@@ -122,11 +142,12 @@ public class LicenseVerifier {
         String safeServerIp = serverIp == null ? "" : serverIp;
         String safeLicenseKey = licenseKey == null ? "" : licenseKey;
         long timestamp = System.currentTimeMillis() / 1000;
-        String target = !safeLicenseKey.isBlank() ? safeLicenseKey : (!safeDomain.isBlank() ? safeDomain : safeServerIp);
-        String sign = md5(APP_KEY + target + timestamp + APP_SECRET);
+        String canonical = String.join("\\n",
+            "v2", APP_KEY, safeLicenseKey, safeDomain, safeServerIp, Long.toString(timestamp));
+        String sign = hmacSha256(APP_SECRET, canonical);
 
         String body = String.format(
-            "{\"appKey\":\"%s\",\"domain\":\"%s\",\"serverIp\":\"%s\",\"licenseKey\":\"%s\",\"timestamp\":%d,\"sign\":\"%s\"}",
+            "{\\"appKey\\":\\"%s\\",\\"domain\\":\\"%s\\",\\"serverIp\\":\\"%s\\",\\"licenseKey\\":\\"%s\\",\\"timestamp\\":%d,\\"signVersion\\":\\"v2\\",\\"sign\\":\\"%s\\"}","
             APP_KEY, safeDomain, safeServerIp, safeLicenseKey, timestamp, sign
         );
 
@@ -140,12 +161,13 @@ public class LicenseVerifier {
             .send(request, HttpResponse.BodyHandlers.ofString())
             .body();
 
-        return response.contains("\"code\":200") && response.contains("\"result\":\"pass\"");
+        return response.contains("\\"code\\":200") && response.contains("\\"result\\":\\"pass\\"");
     }
 
-    private static String md5(String text) throws Exception {
-        MessageDigest md = MessageDigest.getInstance("MD5");
-        byte[] digest = md.digest(text.getBytes(StandardCharsets.UTF_8));
+    private static String hmacSha256(String secret, String text) throws Exception {
+        Mac mac = Mac.getInstance("HmacSHA256");
+        mac.init(new SecretKeySpec(secret.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
+        byte[] digest = mac.doFinal(text.getBytes(StandardCharsets.UTF_8));
         StringBuilder hex = new StringBuilder();
         for (byte b : digest) hex.append(String.format("%02x", b));
         return hex.toString();
@@ -157,18 +179,22 @@ public class LicenseVerifier {
       label: 'C++',
       desc: '适合原生程序或桌面端，示例依赖 libcurl 和 OpenSSL。',
       code: `#include <curl/curl.h>
-#include <openssl/md5.h>
+#include <openssl/hmac.h>
+#include <openssl/sha.h>
 #include <iomanip>
 #include <iostream>
 #include <sstream>
 #include <string>
 #include <ctime>
 
-std::string md5(const std::string& input) {
-    unsigned char digest[MD5_DIGEST_LENGTH];
-    MD5(reinterpret_cast<const unsigned char*>(input.c_str()), input.size(), digest);
+std::string hmacSha256Hex(const std::string& key, const std::string& input) {
+    unsigned char digest[EVP_MAX_MD_SIZE];
+    unsigned int len = 0;
+    HMAC(EVP_sha256(), key.c_str(), static_cast<int>(key.size()),
+         reinterpret_cast<const unsigned char*>(input.c_str()), input.size(), digest, &len);
     std::ostringstream out;
-    for (unsigned char c : digest) out << std::hex << std::setw(2) << std::setfill('0') << (int)c;
+    for (unsigned int i = 0; i < len; ++i)
+        out << std::hex << std::setw(2) << std::setfill('0') << (int)digest[i];
     return out.str();
 }
 
@@ -182,12 +208,12 @@ bool verifyLicense(const std::string& domain, const std::string& serverIp, const
     std::string appKey = "your_app_key";
     std::string appSecret = "your_app_secret";
     long timestamp = std::time(nullptr);
-    std::string target = !licenseKey.empty() ? licenseKey : (!domain.empty() ? domain : serverIp);
-    std::string sign = md5(appKey + target + std::to_string(timestamp) + appSecret);
+    std::string canonical = "v2\\n" + appKey + "\\n" + licenseKey + "\\n" + domain + "\\n" + serverIp + "\\n" + std::to_string(timestamp);
+    std::string sign = hmacSha256Hex(appSecret, canonical);
 
-    std::string body = "{\"appKey\":\"" + appKey + "\",\"domain\":\"" + domain +
-        "\",\"serverIp\":\"" + serverIp + "\",\"licenseKey\":\"" + licenseKey + "\",\"timestamp\":" +
-        std::to_string(timestamp) + ",\"sign\":\"" + sign + "\"}";
+    std::string body = "{\\"appKey\\":\\"\\"" + appKey + "\\",\\"domain\\":\\"\\"" + domain +
+        "\\",\\"serverIp\\":\\"\\"" + serverIp + "\\",\\"licenseKey\\":\\"\\"" + licenseKey + "\\",\\"timestamp\\":\\"\\"" +
+        std::to_string(timestamp) + ",\\"signVersion\\":\\"\\"v2\\",\\"sign\\":\\"\\"" + sign + "\\"}";
 
     CURL* curl = curl_easy_init();
     std::string response;
@@ -205,7 +231,7 @@ bool verifyLicense(const std::string& domain, const std::string& serverIp, const
     curl_slist_free_all(headers);
     curl_easy_cleanup(curl);
 
-    return result == CURLE_OK && response.find("\"code\":200") != std::string::npos && response.find("\"result\":\"pass\"") != std::string::npos;
+    return result == CURLE_OK && response.find("\\"code\\":200") != std::string::npos && response.find("\\"result\\":\\"pass\\"") != std::string::npos;
 }`
     },
     {
@@ -213,6 +239,7 @@ bool verifyLicense(const std::string& domain, const std::string& serverIp, const
       label: 'Python',
       desc: '适合 Django、Flask、FastAPI 或脚本服务。',
       code: `import hashlib
+import hmac
 import time
 import requests
 
@@ -223,8 +250,8 @@ APP_SECRET = 'your_app_secret'
 
 def verify_license(domain: str, server_ip: str = '', license_key: str = '') -> bool:
     timestamp = int(time.time())
-    target = license_key or domain or server_ip
-    sign = hashlib.md5(f'{APP_KEY}{target}{timestamp}{APP_SECRET}'.encode()).hexdigest()
+    canonical = '\\n'.join(['v2', APP_KEY, license_key, domain, server_ip, str(timestamp)])
+    sign = hmac.new(APP_SECRET.encode(), canonical.encode(), hashlib.sha256).hexdigest()
 
     payload = {
         'appKey': APP_KEY,
@@ -232,6 +259,7 @@ def verify_license(domain: str, server_ip: str = '', license_key: str = '') -> b
         'serverIp': server_ip,
         'licenseKey': license_key,
         'timestamp': timestamp,
+        'signVersion': 'v2',
         'sign': sign,
     }
 
@@ -250,37 +278,62 @@ if not verify_license('www.example.com', '203.0.113.10'):
       key: 'go',
       label: 'Go',
       desc: '适合 Go Web 服务，在启动阶段、中间件或定时任务里调用。',
-      code: `package main
+      code:
+        `package main
 
 import (
     "bytes"
-    "crypto/md5"
+    "crypto/hmac"
+    "crypto/sha256"
     "encoding/hex"
     "encoding/json"
     "net/http"
     "strconv"
+    "strings"
     "time"
 )
 
 type VerifyRequest struct {
-    AppKey     string ` + '`json:"appKey"`' + `
-    Domain     string ` + '`json:"domain"`' + `
-    ServerIP   string ` + '`json:"serverIp"`' + `
-    LicenseKey string ` + '`json:"licenseKey"`' + `
-    Timestamp  int64  ` + '`json:"timestamp"`' + `
-    Sign       string ` + '`json:"sign"`' + `
+    AppKey     string ` +
+        '`json:"appKey"`' +
+        `
+    Domain     string ` +
+        '`json:"domain"`' +
+        `
+    ServerIP   string ` +
+        '`json:"serverIp"`' +
+        `
+    LicenseKey string ` +
+        '`json:"licenseKey"`' +
+        `
+    Timestamp  int64  ` +
+        '`json:"timestamp"`' +
+        `
+    SignVersion string ` +
+        '`json:"signVersion"`' +
+        `
+    Sign       string ` +
+        '`json:"sign"`' +
+        `
 }
 
 type VerifyResponse struct {
-    Code int ` + '`json:"code"`' + `
+    Code int ` +
+        '`json:"code"`' +
+        `
     Data struct {
-        Result string ` + '`json:"result"`' + `
-    } ` + '`json:"data"`' + `
+        Result string ` +
+        '`json:"result"`' +
+        `
+    } ` +
+        '`json:"data"`' +
+        `
 }
 
-func md5Text(text string) string {
-    sum := md5.Sum([]byte(text))
-    return hex.EncodeToString(sum[:])
+func hmacSha256Hex(text, secret string) string {
+    mac := hmac.New(sha256.New, []byte(secret))
+    _, _ = mac.Write([]byte(text))
+    return hex.EncodeToString(mac.Sum(nil))
 }
 
 func VerifyLicense(domain, serverIP, licenseKey string) bool {
@@ -288,13 +341,9 @@ func VerifyLicense(domain, serverIP, licenseKey string) bool {
     appKey := "your_app_key"
     appSecret := "your_app_secret"
     timestamp := time.Now().Unix()
-    target := licenseKey
-    if target == "" {
-        target = domain
-    }
-    if target == "" {
-        target = serverIP
-    }
+    canonical := strings.Join([]string{
+        "v2", appKey, licenseKey, domain, serverIP, strconv.FormatInt(timestamp, 10),
+    }, "\\n")
 
     reqBody := VerifyRequest{
         AppKey: appKey,
@@ -302,7 +351,8 @@ func VerifyLicense(domain, serverIP, licenseKey string) bool {
         ServerIP: serverIP,
         LicenseKey: licenseKey,
         Timestamp: timestamp,
-        Sign: md5Text(appKey + target + strconv.FormatInt(timestamp, 10) + appSecret),
+        SignVersion: "v2",
+        Sign: hmacSha256Hex(canonical, appSecret),
     }
 
     body, _ := json.Marshal(reqBody)
@@ -329,14 +379,14 @@ const BASE_URL = 'https://license.example.com'
 const APP_KEY = 'your_app_key'
 const APP_SECRET = 'your_app_secret'
 
-function md5(text) {
-  return crypto.createHash('md5').update(text).digest('hex')
+function hmacSha256Hex(text) {
+  return crypto.createHmac('sha256', APP_SECRET).update(text).digest('hex')
 }
 
 export async function verifyLicense({ domain, serverIp = '', licenseKey = '' }) {
   const timestamp = Math.floor(Date.now() / 1000)
-  const target = licenseKey || domain || serverIp
-  const sign = md5(APP_KEY + target + timestamp + APP_SECRET)
+  const canonical = ['v2', APP_KEY, licenseKey, domain, serverIp, String(timestamp)].join('\\n')
+  const sign = hmacSha256Hex(canonical)
 
   const response = await fetch(BASE_URL + '/api/license/verify', {
     method: 'POST',
@@ -347,6 +397,7 @@ export async function verifyLicense({ domain, serverIp = '', licenseKey = '' }) 
       serverIp,
       licenseKey,
       timestamp,
+      signVersion: 'v2',
       sign,
     }),
   })
@@ -358,7 +409,9 @@ export async function verifyLicense({ domain, serverIp = '', licenseKey = '' }) 
   ]
 
   const activeKey = ref(sdkExamples[0].key)
-  const activeExample = computed(() => sdkExamples.find((item) => item.key === activeKey.value) || sdkExamples[0])
+  const activeExample = computed(
+    () => sdkExamples.find((item) => item.key === activeKey.value) || sdkExamples[0]
+  )
 
   async function copyCode(code: string) {
     try {
@@ -399,9 +452,9 @@ export async function verifyLicense({ domain, serverIp = '', licenseKey = '' }) 
   .sdk-header,
   .example-head {
     display: flex;
+    gap: 16px;
     align-items: center;
     justify-content: space-between;
-    gap: 16px;
   }
 
   .intro-content {
@@ -413,8 +466,8 @@ export async function verifyLicense({ domain, serverIp = '', licenseKey = '' }) 
 
     p {
       margin: 0;
-      color: var(--el-text-color-secondary);
       line-height: 1.7;
+      color: var(--el-text-color-secondary);
     }
   }
 
@@ -442,10 +495,10 @@ export async function verifyLicense({ domain, serverIp = '', licenseKey = '' }) 
     padding: 16px;
     margin: 0;
     overflow: auto;
-    border-radius: 10px;
-    background: #111827;
-    color: #d1d5db;
     line-height: 1.7;
+    color: #d1d5db;
+    background: #111827;
+    border-radius: 10px;
   }
 
   code {
@@ -454,12 +507,12 @@ export async function verifyLicense({ domain, serverIp = '', licenseKey = '' }) 
     white-space: pre;
   }
 
-  @media (max-width: 768px) {
+  @media (width <= 768px) {
     .intro-content,
     .sdk-header,
     .example-head {
-      align-items: flex-start;
       flex-direction: column;
+      align-items: flex-start;
     }
   }
 </style>

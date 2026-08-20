@@ -50,8 +50,8 @@ func PlanList(c *gin.Context) {
 	}
 
 	query := fmt.Sprintf(`
-		SELECT p.id, p.app_id, a.app_name, p.name, p.license_type, p.duration_days, p.price, p.sort,
-		       p.enabled, p.remark, p.created_at
+		SELECT p.id, p.app_id, a.app_name, p.name, p.license_type, p.duration_days, p.price,
+		       COALESCE(p.max_sites, 0), p.sort, p.enabled, p.remark, p.created_at
 		FROM license_plans p
 		LEFT JOIN apps a ON a.id = p.app_id
 		WHERE %s
@@ -74,6 +74,7 @@ func PlanList(c *gin.Context) {
 		DurationDays int     `json:"durationDays"`
 		DurationText string  `json:"durationText"`
 		Price        float64 `json:"price"`
+		MaxSites     int     `json:"maxSites"`
 		Sort         int     `json:"sort"`
 		Enabled      bool    `json:"enabled"`
 		Remark       string  `json:"remark"`
@@ -87,7 +88,7 @@ func PlanList(c *gin.Context) {
 		var remark sql.NullString
 		var createdAt time.Time
 		if err := rows.Scan(&item.ID, &item.AppID, &item.AppName, &item.Name, &item.LicenseType, &item.DurationDays,
-			&item.Price, &item.Sort, &enabled, &remark, &createdAt); err == nil {
+			&item.Price, &item.MaxSites, &item.Sort, &enabled, &remark, &createdAt); err == nil {
 			item.Enabled = enabled == 1
 			if item.DurationDays == 0 {
 				item.DurationText = "永久"
@@ -130,6 +131,7 @@ func PlanCreate(c *gin.Context) {
 		LicenseType  string  `json:"licenseType"`
 		DurationDays int     `json:"durationDays"`
 		Price        float64 `json:"price"`
+		MaxSites     int     `json:"maxSites"`
 		Sort         int     `json:"sort"`
 		Enabled      bool    `json:"enabled"`
 		Remark       string  `json:"remark"`
@@ -140,6 +142,10 @@ func PlanCreate(c *gin.Context) {
 	}
 	if req.Price < 0 {
 		c.JSON(http.StatusOK, gin.H{"code": 400, "msg": "价格不能小于0"})
+		return
+	}
+	if req.MaxSites < 0 {
+		c.JSON(http.StatusOK, gin.H{"code": 400, "msg": "最大站点数不能小于0"})
 		return
 	}
 	req.LicenseType = strings.ToLower(strings.TrimSpace(req.LicenseType))
@@ -173,9 +179,9 @@ func PlanCreate(c *gin.Context) {
 	}
 
 	result, err := db.Exec(`
-		INSERT INTO license_plans (app_id, name, license_type, duration_days, price, sort, enabled, remark)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-	`, req.AppID, req.Name, req.LicenseType, req.DurationDays, req.Price, req.Sort, req.Enabled, req.Remark)
+		INSERT INTO license_plans (app_id, name, license_type, duration_days, price, max_sites, sort, enabled, remark)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, req.AppID, req.Name, req.LicenseType, req.DurationDays, req.Price, req.MaxSites, req.Sort, req.Enabled, req.Remark)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{"code": 500, "msg": "创建失败: " + err.Error()})
 		return
@@ -194,6 +200,7 @@ func PlanUpdate(c *gin.Context) {
 		LicenseType  string  `json:"licenseType"`
 		DurationDays int     `json:"durationDays"`
 		Price        float64 `json:"price"`
+		MaxSites     int     `json:"maxSites"`
 		Sort         int     `json:"sort"`
 		Enabled      bool    `json:"enabled"`
 		Remark       string  `json:"remark"`
@@ -204,6 +211,10 @@ func PlanUpdate(c *gin.Context) {
 	}
 	if req.Price < 0 {
 		c.JSON(http.StatusOK, gin.H{"code": 400, "msg": "价格不能小于0"})
+		return
+	}
+	if req.MaxSites < 0 {
+		c.JSON(http.StatusOK, gin.H{"code": 400, "msg": "最大站点数不能小于0"})
 		return
 	}
 	req.LicenseType = strings.ToLower(strings.TrimSpace(req.LicenseType))
@@ -237,9 +248,9 @@ func PlanUpdate(c *gin.Context) {
 
 	_, err = db.Exec(`
 		UPDATE license_plans
-		SET app_id = ?, name = ?, license_type = ?, duration_days = ?, price = ?, sort = ?, enabled = ?, remark = ?
+		SET app_id = ?, name = ?, license_type = ?, duration_days = ?, price = ?, max_sites = ?, sort = ?, enabled = ?, remark = ?
 		WHERE id = ?
-	`, req.AppID, req.Name, req.LicenseType, req.DurationDays, req.Price, req.Sort, req.Enabled, req.Remark, id)
+	`, req.AppID, req.Name, req.LicenseType, req.DurationDays, req.Price, req.MaxSites, req.Sort, req.Enabled, req.Remark, id)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{"code": 500, "msg": "更新失败: " + err.Error()})
 		return

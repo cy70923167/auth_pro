@@ -171,11 +171,11 @@ func TestAppVersionCheckSignValid(t *testing.T) {
 	mac := hmac.New(sha256.New, []byte("app-secret"))
 	_, _ = mac.Write([]byte(canonical))
 	req.Sign = hex.EncodeToString(mac.Sum(nil))
-	if !appVersionCheckSignValid(req, "app-secret") {
+	if version, valid := appVersionCheckSignValid(req, "app-secret"); !valid || version != licenseSignVersionV1 {
 		t.Fatal("valid version check signature was rejected")
 	}
 	req.CurrentVersion = "1.2.1"
-	if appVersionCheckSignValid(req, "app-secret") {
+	if _, valid := appVersionCheckSignValid(req, "app-secret"); valid {
 		t.Fatal("tampered currentVersion should invalidate signature")
 	}
 }

@@ -434,6 +434,7 @@ func AgentPanelLicenseList(c *gin.Context) {
 	querySQL := fmt.Sprintf(`
 		SELECT l.id, l.license_no, l.app_id, a.app_name, l.type, l.status,
 		       l.source, l.expired_at, l.created_at, l.license_key,
+		       COALESCE(l.max_domains, 0), COUNT(DISTINCT ld.id),
 		       GROUP_CONCAT(ld.domain SEPARATOR ', ') as domains
 		FROM licenses l
 		LEFT JOIN apps a ON a.id = l.app_id
@@ -465,6 +466,8 @@ func AgentPanelLicenseList(c *gin.Context) {
 		Source         string `json:"source"`
 		Domain         string `json:"domain"`
 		BindingPending bool   `json:"bindingPending"`
+		BoundSites     int64  `json:"boundSites"`
+		MaxSites       int    `json:"maxSites"`
 		ExpireAt       string `json:"expireAt"`
 		CreatedAt      string `json:"createdAt"`
 	}
@@ -476,7 +479,7 @@ func AgentPanelLicenseList(c *gin.Context) {
 		var createdAt sql.NullTime
 		var licenseKey, source string
 		var domains sql.NullString
-		if err := rows.Scan(&item.ID, &item.LicenseNo, &item.AppID, &item.AppName, &item.Type, &item.Status, &source, &expiredAt, &createdAt, &licenseKey, &domains); err != nil {
+		if err := rows.Scan(&item.ID, &item.LicenseNo, &item.AppID, &item.AppName, &item.Type, &item.Status, &source, &expiredAt, &createdAt, &licenseKey, &item.MaxSites, &item.BoundSites, &domains); err != nil {
 			continue
 		}
 		item.TypeLabel = typeLabels[item.Type]
@@ -484,10 +487,10 @@ func AgentPanelLicenseList(c *gin.Context) {
 		if item.Source == "" {
 			item.Source = source
 		}
-		if domains.Valid && domains.String != "" {
-			item.Domain = domains.String
-		} else if licenseKey != "" {
+		if item.Type == "key" && licenseKey != "" {
 			item.Domain = licenseKey
+		} else if domains.Valid && domains.String != "" {
+			item.Domain = domains.String
 		}
 		item.BindingPending = item.Type != "key" && item.Domain == ""
 		if expiredAt.Valid {
@@ -1188,9 +1191,9 @@ func AgentPanelPurchase(c *gin.Context) {
 	licenseResult, err := tx.Exec(`
 		INSERT INTO licenses (license_no, app_id, plan_id, original_price, type, status, source, owner_type, owner_id, issued_by,
 		                      duration_days, started_at, expired_at, license_key, max_domains, remark)
-		VALUES (?, ?, ?, ?, ?, 'active', 'agent', ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
+		VALUES (?, ?, ?, ?, ?, 'active', 'agent', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		licenseNo, req.AppID, req.PlanID, originalPrice, req.Type, ownerType, ownerID, agentID,
-		durationDays, now, expiredAt, licenseKey, fmt.Sprintf("代理商开通 %s - %s", appName, planName))
+		durationDays, now, expiredAt, licenseKey, plan.MaxSites, fmt.Sprintf("代理商开通 %s - %s", appName, planName))
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{"code": 500, "msg": "创建授权失败: " + err.Error()})
 		return
@@ -1232,14 +1235,14 @@ func AgentPanelPurchase(c *gin.Context) {
 			order_no, agent_id, user_id, app_id, plan_id, owner_type, owner_id,
 			type, target, amount, original_amount, base_amount, discount_amount,
 			promotion_id, promotion_name, promotion_rule_snapshot, pricing_snapshot,
-			app_name_snapshot, plan_name_snapshot, duration_days_snapshot,
+			app_name_snapshot, plan_name_snapshot, duration_days_snapshot, max_sites_snapshot,
 			pay_channel, pay_method, status, return_url, remark,
 			license_id, license_no, paid_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'paid', '', ?, ?, ?, NOW())`,
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'paid', '', ?, ?, ?, NOW())`,
 		orderNo, agentID, req.UserID, req.AppID, req.PlanID, ownerType, ownerID, req.Type, req.Domain,
 		orderSnapshot.Amount, orderSnapshot.OriginalAmount, orderSnapshot.BaseAmount, orderSnapshot.DiscountAmount,
 		orderSnapshot.PromotionID, orderSnapshot.PromotionName, orderSnapshot.PromotionRule, orderSnapshot.PricingSnapshot,
-		orderSnapshot.AppName, orderSnapshot.PlanName, orderSnapshot.DurationDays,
+		orderSnapshot.AppName, orderSnapshot.PlanName, orderSnapshot.DurationDays, orderSnapshot.MaxSites,
 		payMethod, payMethod, orderRemark, licenseID, licenseNo)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{"code": 500, "msg": "写入订单记录失败"})

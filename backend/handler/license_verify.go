@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"crypto/hmac"
 	"crypto/md5"
 	"database/sql"
 	"encoding/hex"
@@ -19,12 +20,13 @@ import (
 )
 
 type licenseVerifyRequest struct {
-	AppKey     string `json:"appKey" binding:"required"`
-	Domain     string `json:"domain"`
-	ServerIP   string `json:"serverIp"`
-	LicenseKey string `json:"licenseKey"`
-	Timestamp  int64  `json:"timestamp" binding:"required"`
-	Sign       string `json:"sign" binding:"required"`
+	AppKey      string `json:"appKey" binding:"required"`
+	Domain      string `json:"domain"`
+	ServerIP    string `json:"serverIp"`
+	LicenseKey  string `json:"licenseKey"`
+	Timestamp   int64  `json:"timestamp" binding:"required"`
+	SignVersion string `json:"signVersion"`
+	Sign        string `json:"sign" binding:"required"`
 }
 
 type matchedLicense struct {
@@ -88,8 +90,8 @@ func LicenseVerify(c *gin.Context) {
 	rawLicenseKey := strings.TrimSpace(req.LicenseKey)
 
 	req.AppKey = strings.TrimSpace(req.AppKey)
-	req.Domain = normalizeLicenseTarget(rawDomain)
-	req.ServerIP = rawServerIP
+	req.Domain = normalizeLicenseDomain(rawDomain)
+	req.ServerIP = normalizeLicenseServerIP(rawServerIP)
 	req.LicenseKey = rawLicenseKey
 	req.Sign = strings.ToLower(strings.TrimSpace(req.Sign))
 
@@ -132,11 +134,13 @@ func LicenseVerify(c *gin.Context) {
 		return
 	}
 
-	if !licenseVerifySignValid(req, appSecret, rawDomain, rawServerIP, rawLicenseKey) {
+	signVersion, signValid := licenseVerifySignValid(req, appSecret, rawDomain, rawServerIP, rawLicenseKey)
+	if !signValid {
 		writeVerifyLog(db, sql.NullInt64{}, appID, req.Domain, req.ServerIP, c.ClientIP(), "fail", "invalid_sign", c.GetHeader("User-Agent"))
 		c.JSON(http.StatusOK, gin.H{"code": 403, "msg": "签名错误", "data": gin.H{"result": "fail", "reason": "invalid_sign"}})
 		return
 	}
+	req.SignVersion = signVersion
 
 	if isLicenseTargetBlacklisted(db, appID, req.Domain, req.ServerIP) {
 		writeVerifyLog(db, sql.NullInt64{}, appID, req.Domain, req.ServerIP, c.ClientIP(), "blacklisted", "target_blacklisted", c.GetHeader("User-Agent"))
@@ -186,12 +190,40 @@ func LicenseVerify(c *gin.Context) {
 		return
 	}
 
+	if license.Type == "key" {
+		if err := requireKeyLicenseSite(db, license.ID, req.Domain, req.ServerIP, req.SignVersion); err != nil {
+			reason, message := licenseSiteFailure(err)
+			writeVerifyLog(db, sql.NullInt64{Int64: license.ID, Valid: true}, appID, req.Domain, req.ServerIP, c.ClientIP(), "fail", reason, c.GetHeader("User-Agent"))
+			c.JSON(http.StatusOK, gin.H{"code": 403, "msg": message, "data": gin.H{"result": "fail", "reason": reason}})
+			return
+		}
+	}
+
 	writeVerifyLog(db, sql.NullInt64{Int64: license.ID, Valid: true}, appID, req.Domain, req.ServerIP, c.ClientIP(), "pass", "", c.GetHeader("User-Agent"))
 	c.JSON(http.StatusOK, gin.H{
 		"code": 200,
 		"msg":  "授权有效",
 		"data": licenseVerifySuccessData(appName, license),
 	})
+}
+
+func licenseSiteFailure(err error) (string, string) {
+	switch {
+	case errors.Is(err, errLicenseSiteEmpty):
+		return "empty_target", "授权站点不能为空"
+	case errors.Is(err, errLicenseSiteInvalidDomain):
+		return "invalid_domain", "授权域名格式不正确"
+	case errors.Is(err, errLicenseSiteInvalidIP):
+		return "invalid_server_ip", "服务器 IP 格式不正确"
+	case errors.Is(err, errLicenseSignatureUpgrade):
+		return "signature_upgrade_required", "新站点首次绑定需要升级 SDK 并使用 v2 签名"
+	case errors.Is(err, errLicenseSiteLimitReached):
+		return "site_limit_exceeded", "授权已达到最大站点数"
+	case errors.Is(err, errLicenseSiteNotBound):
+		return "site_not_bound", "当前站点尚未绑定"
+	default:
+		return "site_check_failed", "站点校验失败，请稍后重试"
+	}
 }
 
 func findMatchedLicense(db *sql.DB, appID int64, req licenseVerifyRequest) (matchedLicense, bool, string) {
@@ -317,17 +349,23 @@ func licenseVerifySignTarget(req licenseVerifyRequest) string {
 	return req.ServerIP
 }
 
-func licenseVerifySignValid(req licenseVerifyRequest, appSecret, rawDomain, rawServerIP, rawLicenseKey string) bool {
-	targets := []string{licenseVerifySignTarget(req), licenseVerifyRawSignTarget(rawDomain, rawServerIP, rawLicenseKey)}
-	for _, target := range targets {
-		if target == "" {
-			continue
-		}
-		if req.Sign == licenseVerifyMD5(req.AppKey+target+int64ToString(req.Timestamp)+appSecret) {
-			return true
+func licenseVerifySignValid(req licenseVerifyRequest, appSecret, rawDomain, rawServerIP, rawLicenseKey string) (string, bool) {
+	requestedVersion := strings.ToLower(strings.TrimSpace(req.SignVersion))
+	switch requestedVersion {
+	case "2", licenseSignVersionV2:
+		return licenseSignVersionV2, hmac.Equal([]byte(req.Sign), []byte(licenseVerifyV2Sign(req, appSecret)))
+	case "", "1", licenseSignVersionV1:
+		targets := []string{licenseVerifySignTarget(req), licenseVerifyRawSignTarget(rawDomain, rawServerIP, rawLicenseKey)}
+		for _, target := range targets {
+			if target == "" {
+				continue
+			}
+			if req.Sign == licenseVerifyMD5(req.AppKey+target+int64ToString(req.Timestamp)+appSecret) {
+				return licenseSignVersionV1, true
+			}
 		}
 	}
-	return false
+	return "", false
 }
 
 func licenseVerifyRawSignTarget(rawDomain, rawServerIP, rawLicenseKey string) string {

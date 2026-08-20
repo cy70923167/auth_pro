@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -645,25 +646,32 @@ func loadCompletedAccountConversion(tx *sql.Tx, order accountUpgradeOrder) (acco
 	return result, nil
 }
 
-func openAccountUpgradeDB() (*sql.DB, error) {
+func openAccountUpgradeConnection() (*sql.DB, error) {
 	cfg, err := config.LoadDBConfig()
 	if err != nil {
 		return nil, err
 	}
-	db, err := sql.Open("mysql", config.GetDSN(cfg))
+	return sql.Open("mysql", config.GetDSN(cfg))
+}
+
+func openAccountUpgradeDB() (*sql.DB, error) {
+	db, err := openAccountUpgradeConnection()
 	if err != nil {
 		return nil, err
 	}
 	if err := EnsureAccountUpgradeSchema(db); err != nil {
 		db.Close()
+		log.Printf("[openAccountUpgradeDB] EnsureAccountUpgradeSchema 失败: %v", err)
 		return nil, err
 	}
 	if err := ensureLicensePurchaseOrderSchema(db); err != nil {
 		db.Close()
+		log.Printf("[openAccountUpgradeDB] ensureLicensePurchaseOrderSchema 失败: %v", err)
 		return nil, err
 	}
 	if err := ensureRechargeOrderSchema(db); err != nil {
 		db.Close()
+		log.Printf("[openAccountUpgradeDB] ensureRechargeOrderSchema 失败: %v", err)
 		return nil, err
 	}
 	return db, nil

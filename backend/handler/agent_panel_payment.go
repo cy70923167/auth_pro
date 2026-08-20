@@ -596,13 +596,13 @@ func insertAllowedLicensePurchaseOrder(db *sql.DB, orderNo string, agentID uint,
 			order_no, agent_id, user_id, app_id, plan_id, owner_type, owner_id,
 			type, target, amount, original_amount, base_amount, discount_amount,
 			promotion_id, promotion_name, promotion_rule_snapshot, pricing_snapshot,
-			app_name_snapshot, plan_name_snapshot, duration_days_snapshot,
+			app_name_snapshot, plan_name_snapshot, duration_days_snapshot, max_sites_snapshot,
 			pay_channel, pay_method, status, return_url, remark
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
 	`, orderNo, agentID, uid, plan.AppID, plan.PlanID, ownerType, ownerID, licenseType, domain,
 		snapshot.Amount, snapshot.OriginalAmount, snapshot.BaseAmount, snapshot.DiscountAmount,
 		snapshot.PromotionID, snapshot.PromotionName, snapshot.PromotionRule, snapshot.PricingSnapshot,
-		snapshot.AppName, snapshot.PlanName, snapshot.DurationDays,
+		snapshot.AppName, snapshot.PlanName, snapshot.DurationDays, snapshot.MaxSites,
 		payChannel, payType, returnURL, orderRemark); err != nil {
 		return err
 	}
@@ -643,6 +643,7 @@ func settleLicensePurchaseOrder(db *sql.DB, orderNo string, paidCents int64, pay
 		appNameSnapshot  sql.NullString
 		planNameSnapshot sql.NullString
 		durationSnapshot sql.NullInt64
+		maxSitesSnapshot sql.NullInt64
 		expectedChannel  string
 		expectedMethod   string
 		currentTradeNo   string
@@ -650,13 +651,13 @@ func settleLicensePurchaseOrder(db *sql.DB, orderNo string, paidCents int64, pay
 	err = tx.QueryRow(`
 		SELECT id, agent_id, owner_type, owner_id, app_id, plan_id, type, COALESCE(target, ''),
 		       amount, COALESCE(original_amount, amount), status,
-		       app_name_snapshot, plan_name_snapshot, duration_days_snapshot,
+		       app_name_snapshot, plan_name_snapshot, duration_days_snapshot, max_sites_snapshot,
 		       COALESCE(pay_channel, ''), COALESCE(pay_method, ''), COALESCE(gateway_trade_no, '')
 		FROM license_purchase_orders
 		WHERE order_no = ?
 		FOR UPDATE
 	`, orderNo).Scan(&id, &agentID, &ownerType, &ownerID, &appID, &planID, &licenseType, &target,
-		&amountText, &originalPrice, &status, &appNameSnapshot, &planNameSnapshot, &durationSnapshot,
+		&amountText, &originalPrice, &status, &appNameSnapshot, &planNameSnapshot, &durationSnapshot, &maxSitesSnapshot,
 		&expectedChannel, &expectedMethod, &currentTradeNo)
 	if err != nil {
 		return err
@@ -684,13 +685,14 @@ func settleLicensePurchaseOrder(db *sql.DB, orderNo string, paidCents int64, pay
 
 	appName, planName := appNameSnapshot.String, planNameSnapshot.String
 	durationDays := int(durationSnapshot.Int64)
-	if !appNameSnapshot.Valid || appNameSnapshot.String == "" || !planNameSnapshot.Valid || planNameSnapshot.String == "" || !durationSnapshot.Valid {
+	maxSites := int(maxSitesSnapshot.Int64)
+	if !appNameSnapshot.Valid || appNameSnapshot.String == "" || !planNameSnapshot.Valid || planNameSnapshot.String == "" || !durationSnapshot.Valid || !maxSitesSnapshot.Valid {
 		err = tx.QueryRow(`
-			SELECT a.app_name, p.name, p.duration_days
+			SELECT a.app_name, p.name, p.duration_days, COALESCE(p.max_sites, 0)
 			FROM license_plans p
 			JOIN apps a ON a.id = p.app_id
 			WHERE p.id = ? AND p.app_id = ?
-		`, planID, appID).Scan(&appName, &planName, &durationDays)
+		`, planID, appID).Scan(&appName, &planName, &durationDays, &maxSites)
 		if err != nil {
 			return fmt.Errorf("订单缺少套餐快照且套餐已不存在，无法生成授权")
 		}
@@ -723,9 +725,9 @@ func settleLicensePurchaseOrder(db *sql.DB, orderNo string, paidCents int64, pay
 	licenseResult, err := tx.Exec(`
 		INSERT INTO licenses (license_no, app_id, plan_id, original_price, type, status, source, owner_type, owner_id, issued_by,
 		                      duration_days, started_at, expired_at, license_key, max_domains, remark)
-		VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
+		VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		licenseNo, appID, planID, originalPrice, licenseType, licenseSource, ownerType, ownerID, issuedBy,
-		durationDays, now, expiredAt, licenseKey, licenseRemark)
+		durationDays, now, expiredAt, licenseKey, maxSites, licenseRemark)
 	if err != nil {
 		return err
 	}
@@ -798,6 +800,7 @@ func ensureLicensePurchaseOrderSchema(db *sql.DB) error {
 			app_name_snapshot VARCHAR(100) NOT NULL DEFAULT '' COMMENT '应用名称快照',
 			plan_name_snapshot VARCHAR(100) NOT NULL DEFAULT '' COMMENT '套餐名称快照',
 			duration_days_snapshot INT UNSIGNED DEFAULT NULL COMMENT '套餐时长快照',
+			max_sites_snapshot INT UNSIGNED DEFAULT NULL COMMENT '密钥授权最大站点数快照，0表示不限',
 			paid_amount DECIMAL(12,2) DEFAULT NULL COMMENT '实际支付金额',
 			pay_channel VARCHAR(30) DEFAULT '' COMMENT '支付渠道',
 			pay_method VARCHAR(30) DEFAULT '' COMMENT '支付方式',
@@ -839,6 +842,7 @@ func ensureLicensePurchaseOrderSchema(db *sql.DB) error {
 		{"app_name_snapshot", "ALTER TABLE license_purchase_orders ADD COLUMN app_name_snapshot VARCHAR(100) NOT NULL DEFAULT '' COMMENT '应用名称快照' AFTER pricing_snapshot"},
 		{"plan_name_snapshot", "ALTER TABLE license_purchase_orders ADD COLUMN plan_name_snapshot VARCHAR(100) NOT NULL DEFAULT '' COMMENT '套餐名称快照' AFTER app_name_snapshot"},
 		{"duration_days_snapshot", "ALTER TABLE license_purchase_orders ADD COLUMN duration_days_snapshot INT UNSIGNED DEFAULT NULL COMMENT '套餐时长快照' AFTER plan_name_snapshot"},
+		{"max_sites_snapshot", "ALTER TABLE license_purchase_orders ADD COLUMN max_sites_snapshot INT UNSIGNED DEFAULT NULL COMMENT '密钥授权最大站点数快照，0表示不限' AFTER duration_days_snapshot"},
 	}
 	for _, column := range columns {
 		if err := ensureColumn(db, "license_purchase_orders", column.name, column.sql); err != nil {

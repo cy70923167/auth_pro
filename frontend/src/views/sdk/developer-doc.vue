@@ -128,26 +128,48 @@
     { field: 'domain', required: '否', desc: '当前访问域名，域名/IP 授权使用。' },
     { field: 'serverIp', required: '否', desc: '当前服务器 IP，IP 授权或风控追踪使用。' },
     { field: 'licenseKey', required: '否', desc: '密钥授权时传入。' },
-    { field: 'timestamp', required: '建议', desc: '请求时间戳，用于防重放。' },
-    { field: 'sign', required: '建议', desc: '签名字段，建议使用 appSecret 生成。' }
+    { field: 'timestamp', required: '是', desc: 'Unix 秒级时间戳，服务端允许前后 10 分钟偏差。' },
+    {
+      field: 'signVersion',
+      required: '是',
+      desc: '签名版本，新接入必须传 "v2"；v1 仅兼容历史绑定站点。'
+    },
+    {
+      field: 'sign',
+      required: '是',
+      desc: 'v2: HMAC-SHA256(appSecret, "v2\\nappKey\\nlicenseKey\\ndomain\\nserverIp\\ntimestamp")；v1: MD5(appKey+target+timestamp+appSecret)。'
+    }
   ]
 
   const statusRows = [
     { status: 'pass', desc: '授权有效，可以继续运行。' },
     { status: 'fail', desc: '授权不存在、目标不匹配或签名错误。' },
     { status: 'expired', desc: '授权已过期，需要续费或重新开通。' },
-    { status: 'blacklisted', desc: '目标命中黑名单，应立即阻断访问。' }
+    { status: 'blacklisted', desc: '目标命中黑名单，应立即阻断访问。' },
+    {
+      status: 'signature_upgrade_required',
+      desc: '密钥新站点首次绑定必须使用 v2 签名，当前 SDK 需升级。'
+    },
+    {
+      status: 'site_limit_exceeded',
+      desc: '密钥已绑定站点数达到上限，拒绝新站点，不吊销已绑定站点。'
+    }
   ]
 
   const versionRequestRows = [
     { field: 'appKey', required: '是', desc: '应用管理中生成的应用标识。' },
     { field: 'currentVersion', required: '是', desc: '客户端当前版本号，例如 1.2.0。' },
-    { field: 'domain/serverIp/licenseKey', required: '三选一', desc: '与有效授权匹配的授权目标。' },
+    {
+      field: 'domain/serverIp/licenseKey',
+      required: '三选一',
+      desc: '与有效授权匹配的授权目标，密钥授权时同时上报 domain/serverIp 以定位站点。'
+    },
     { field: 'timestamp', required: '是', desc: 'Unix 秒级时间戳，服务端允许前后 10 分钟偏差。' },
+    { field: 'signVersion', required: '是', desc: '签名版本，新接入必须传 "v2"。' },
     {
       field: 'sign',
       required: '是',
-      desc: 'HMAC-SHA256(appSecret, appKey + 换行 + currentVersion + 换行 + 授权目标 + 换行 + timestamp)。'
+      desc: 'v2: HMAC-SHA256(appSecret, "v2\\nappKey\\ncurrentVersion\\nlicenseKey\\ndomain\\nserverIp\\ntimestamp")；v1: HMAC-SHA256(appSecret, appKey\\ncurrentVersion\\n目标\\ntimestamp)。'
     }
   ]
 
@@ -160,8 +182,13 @@ Content-Type: application/json
   "serverIp": "203.0.113.10",
   "licenseKey": "",
   "timestamp": 1760000000,
-  "sign": "md5(appKey + domain + timestamp + appSecret)"
-}`
+  "signVersion": "v2",
+  "sign": "hmac_sha256_hex"
+}
+
+// v2 规范串（固定 6 段，字段为空时保留空串）：
+// v2\\ncms_pro\\n\\nwww.example.com\\n203.0.113.10\\n1760000000
+// sign = HMAC-SHA256(appSecret, 上述规范串)`
 
   const successExample = `{
   "code": 200,
@@ -185,7 +212,8 @@ Content-Type: application/json
   const pseudoCode = `启动项目
   读取 appKey/appSecret/licenseKey
   获取当前 domain/serverIp
-  生成 timestamp 和 sign
+  生成 timestamp
+  按 "v2\\nappKey\\nlicenseKey\\ndomain\\nserverIp\\ntimestamp" 生成 HMAC-SHA256 v2 签名
   请求 /api/license/verify
   如果 result == pass:
     允许系统继续运行
@@ -199,9 +227,16 @@ Content-Type: application/json
   "appKey": "cms_pro",
   "currentVersion": "1.2.0",
   "licenseKey": "license_xxx",
+  "domain": "www.example.com",
+  "serverIp": "203.0.113.10",
   "timestamp": 1784788800,
+  "signVersion": "v2",
   "sign": "hmac_sha256_hex"
 }
+
+// v2 规范串（固定 7 段，字段为空时保留空串）：
+// v2\\ncms_pro\\n1.2.0\\nlicense_xxx\\nwww.example.com\\n203.0.113.10\\n1784788800
+// sign = HMAC-SHA256(appSecret, 上述规范串)
 
 {
   "code": 200,
@@ -238,8 +273,9 @@ Content-Type: application/json
 
   const versionUpdateFlow = `检查更新:
   读取 appKey/appSecret、当前版本和授权目标
+  获取当前 domain/serverIp
   生成 timestamp
-  按 appKey、currentVersion、授权目标、timestamp 生成 HMAC-SHA256 签名
+  按 "v2\\nappKey\\ncurrentVersion\\nlicenseKey\\ndomain\\nserverIp\\ntimestamp" 生成 HMAC-SHA256 v2 签名
   POST /api/app/version/check
   如果 hasUpdate == false:
     结束更新
@@ -262,9 +298,9 @@ Content-Type: application/json
 
   .doc-header {
     display: flex;
+    gap: 16px;
     align-items: center;
     justify-content: space-between;
-    gap: 16px;
 
     h2 {
       margin: 0 0 8px;
@@ -303,30 +339,30 @@ Content-Type: application/json
     display: grid;
     gap: 10px;
     padding: 14px 16px;
+    background: var(--el-fill-color-lighter);
     border: 1px solid var(--el-border-color-lighter);
     border-radius: 10px;
-    background: var(--el-fill-color-lighter);
   }
 
   code {
     padding: 2px 6px;
-    border-radius: 4px;
-    background: var(--el-fill-color);
     font-family: 'Roboto Mono', monospace;
+    background: var(--el-fill-color);
+    border-radius: 4px;
   }
 
   pre {
     padding: 16px;
     overflow: auto;
-    border-radius: 10px;
-    background: #111827;
-    color: #d1d5db;
     line-height: 1.7;
+    color: #d1d5db;
+    background: #111827;
+    border-radius: 10px;
 
     code {
       padding: 0;
-      background: transparent;
       color: inherit;
+      background: transparent;
     }
   }
 </style>

@@ -344,6 +344,7 @@ func UserLicenseList(c *gin.Context) {
 	querySQL := fmt.Sprintf(`
 		SELECT l.id, l.license_no, l.app_id, a.app_name, l.type, l.status,
 		       l.source, l.original_price, l.expired_at, l.created_at, l.license_key,
+		       COALESCE(l.max_domains, 0), COUNT(DISTINCT ld.id),
 		       GROUP_CONCAT(ld.domain SEPARATOR ', ') as domains
 		FROM licenses l
 		LEFT JOIN apps a ON a.id = l.app_id
@@ -378,6 +379,8 @@ func UserLicenseList(c *gin.Context) {
 		Amount         *float64 `json:"amount"`
 		Domain         string   `json:"domain"`
 		BindingPending bool     `json:"bindingPending"`
+		BoundSites     int64    `json:"boundSites"`
+		MaxSites       int      `json:"maxSites"`
 		ExpireAt       string   `json:"expireAt"`
 		CreatedAt      string   `json:"createdAt"`
 	}
@@ -392,7 +395,7 @@ func UserLicenseList(c *gin.Context) {
 		var domains sql.NullString
 
 		rows.Scan(&item.ID, &item.LicenseNo, &item.AppID, &item.AppName, &item.Type,
-			&item.Status, &source, &originalPrice, &expiredAt, &createdAt, &licenseKey, &domains)
+			&item.Status, &source, &originalPrice, &expiredAt, &createdAt, &licenseKey, &item.MaxSites, &item.BoundSites, &domains)
 
 		item.TypeLabel = typeLabels[item.Type]
 		item.Source = sourceLabels[source]
@@ -404,10 +407,10 @@ func UserLicenseList(c *gin.Context) {
 			item.Amount = &amount
 		}
 
-		if domains.Valid && domains.String != "" {
-			item.Domain = domains.String
-		} else if licenseKey != "" {
+		if item.Type == "key" && licenseKey != "" {
 			item.Domain = licenseKey
+		} else if domains.Valid && domains.String != "" {
+			item.Domain = domains.String
 		}
 		item.BindingPending = item.Type != "key" && item.Domain == ""
 
@@ -957,9 +960,9 @@ func UserPurchase(c *gin.Context) {
 	result, err := tx.Exec(`
 		INSERT INTO licenses (license_no, app_id, plan_id, original_price, type, status, source, owner_type, owner_id,
 		                      duration_days, started_at, expired_at, license_key, max_domains, remark)
-		VALUES (?, ?, ?, ?, ?, 'active', 'user_purchase', 'user', ?, ?, ?, ?, ?, 1, ?)`,
+		VALUES (?, ?, ?, ?, ?, 'active', 'user_purchase', 'user', ?, ?, ?, ?, ?, ?, ?)`,
 		licenseNo, req.AppID, req.PlanID, purchaseAmount(quote.OriginalCents), req.Type, userID,
-		durationDays, now, expiredAt, licenseKey, fmt.Sprintf("用户自助购买 %s - %s", appName, planName))
+		durationDays, now, expiredAt, licenseKey, plan.MaxSites, fmt.Sprintf("用户自助购买 %s - %s", appName, planName))
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{"code": 500, "msg": "创建授权失败: " + err.Error()})
 		return
@@ -999,14 +1002,14 @@ func UserPurchase(c *gin.Context) {
 			order_no, agent_id, user_id, app_id, plan_id, owner_type, owner_id,
 			type, target, amount, original_amount, base_amount, discount_amount,
 			promotion_id, promotion_name, promotion_rule_snapshot, pricing_snapshot,
-			app_name_snapshot, plan_name_snapshot, duration_days_snapshot,
+			app_name_snapshot, plan_name_snapshot, duration_days_snapshot, max_sites_snapshot,
 			pay_channel, pay_method, status, return_url, remark,
 			license_id, license_no, paid_at
-		) VALUES (?, 0, ?, ?, ?, 'user', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'balance', 'balance', 'paid', '', ?, ?, ?, NOW())`,
+		) VALUES (?, 0, ?, ?, ?, 'user', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'balance', 'balance', 'paid', '', ?, ?, ?, NOW())`,
 		orderNo, userID, req.AppID, req.PlanID, userID, req.Type, req.Domain,
 		orderSnapshot.Amount, orderSnapshot.OriginalAmount, orderSnapshot.BaseAmount, orderSnapshot.DiscountAmount,
 		orderSnapshot.PromotionID, orderSnapshot.PromotionName, orderSnapshot.PromotionRule, orderSnapshot.PricingSnapshot,
-		orderSnapshot.AppName, orderSnapshot.PlanName, orderSnapshot.DurationDays,
+		orderSnapshot.AppName, orderSnapshot.PlanName, orderSnapshot.DurationDays, orderSnapshot.MaxSites,
 		"用户余额支付购买授权", licenseID, licenseNo)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{"code": 500, "msg": "写入订单记录失败"})

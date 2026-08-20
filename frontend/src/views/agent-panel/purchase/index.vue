@@ -124,17 +124,25 @@
                   <div v-if="plan.promotion" class="promo-badge">{{ plan.promotion.name }}</div>
                   <div class="plan-head">
                     <span class="plan-name">{{ plan.name }}</span>
-                    <span v-if="plan.promotion" class="plan-tag promo">{{ promoRuleText(plan.promotion) }}</span>
-                    <span v-else-if="planHasDiscount(plan)" class="plan-tag">{{ formatDiscount(plan.discount) }}</span>
+                    <span v-if="plan.promotion" class="plan-tag promo">{{
+                      promoRuleText(plan.promotion)
+                    }}</span>
+                    <span v-else-if="planHasDiscount(plan)" class="plan-tag">{{
+                      formatDiscount(plan.discount)
+                    }}</span>
                   </div>
                   <div class="plan-pricing">
                     <span class="plan-currency">¥</span>
                     <span class="plan-amount">{{ Number(plan.price).toFixed(2) }}</span>
-                    <span v-if="planHasDiscount(plan)" class="plan-original">¥{{ Number(plan.originalPrice).toFixed(2) }}</span>
+                    <span v-if="planHasDiscount(plan)" class="plan-original"
+                      >¥{{ Number(plan.originalPrice).toFixed(2) }}</span
+                    >
                   </div>
                   <div class="plan-meta">
                     <span class="plan-duration">{{ plan.durationText }}</span>
-                    <span v-if="plan.promotion" class="plan-time">活动截止：{{ plan.promotion.endsAt }}</span>
+                    <span v-if="plan.promotion" class="plan-time"
+                      >活动截止：{{ plan.promotion.endsAt }}</span
+                    >
                   </div>
                 </div>
               </div>
@@ -208,13 +216,25 @@
               <div class="payment-row">
                 <span>套餐原价</span><span>¥{{ originalPrice.toFixed(2) }}</span>
               </div>
-              <div class="payment-row discount-row">
+              <div v-if="!usePromotionPath" class="payment-row discount-row">
                 <span>代理折扣</span>
                 <span
                   >{{ formatDiscount(agentDiscount)
-                  }}<template v-if="hasDiscount"
-                    >，优惠 ¥{{ discountAmount.toFixed(2) }}</template
+                  }}<template v-if="hasAgentDiscount"
+                    >，优惠 ¥{{ agentDiscountAmount.toFixed(2) }}</template
                   ></span
+                >
+              </div>
+              <div v-if="usePromotionPath" class="payment-row discount-row">
+                <span
+                  >活动优惠{{
+                    selectedPromotion?.name ? `（${selectedPromotion.name}）` : ''
+                  }}</span
+                >
+                <span
+                  >{{ promoRuleText(selectedPromotion) }}，优惠 ¥{{
+                    promotionSavings.toFixed(2)
+                  }}</span
                 >
               </div>
             </div>
@@ -445,6 +465,7 @@
           plans: (a.plans || []).map((p: any) => ({
             ...p,
             price: normalizePrice(p),
+            basePrice: normalizeBasePrice(p),
             originalPrice: normalizeOriginalPrice(p),
             discount: normalizeDiscount(p)
           }))
@@ -474,6 +495,12 @@
 
   function normalizeOriginalPrice(plan: any) {
     return Number(plan.originalPrice ?? plan.OriginalPrice ?? normalizePrice(plan))
+  }
+
+  function normalizeBasePrice(plan: any) {
+    const base = Number(plan.basePrice ?? plan.BasePrice ?? NaN)
+    if (Number.isFinite(base)) return base
+    return Math.max(0, (normalizeOriginalPrice(plan) * normalizeDiscount(plan)) / 10)
   }
 
   function normalizeDiscount(plan: any) {
@@ -690,6 +717,19 @@
     Number(selectedPlan.value?.originalPrice ?? computedCost.value)
   )
   const agentDiscount = computed(() => Number(selectedPlan.value?.discount ?? 10))
+  const basePrice = computed(() => {
+    const plan = selectedPlan.value
+    if (plan && Number.isFinite(Number(plan.basePrice))) return Number(plan.basePrice)
+    return Math.max(0, (originalPrice.value * agentDiscount.value) / 10)
+  })
+  const agentDiscountAmount = computed(() => Math.max(0, originalPrice.value - basePrice.value))
+  const hasAgentDiscount = computed(() => agentDiscountAmount.value >= 0.01)
+  const selectedPromotion = computed(() => selectedPlan.value?.promotion || null)
+  const promotionSavings = computed(() => Math.max(0, originalPrice.value - computedCost.value))
+  const agentSavings = computed(() => Math.max(0, originalPrice.value - basePrice.value))
+  const usePromotionPath = computed(
+    () => !!selectedPromotion.value && promotionSavings.value >= agentSavings.value
+  )
   const discountAmount = computed(() => Math.max(0, originalPrice.value - computedCost.value))
   const hasDiscount = computed(() => discountAmount.value >= 0.01)
   const displayTarget = computed(() =>
@@ -902,35 +942,35 @@
 
     .step {
       display: flex;
-      align-items: center;
       gap: 8px;
+      align-items: center;
       cursor: pointer;
 
       .step-dot {
-        width: 28px;
-        height: 28px;
-        border-radius: 50%;
-        background: var(--el-fill-color);
-        color: var(--el-text-color-secondary);
         display: flex;
         align-items: center;
         justify-content: center;
+        width: 28px;
+        height: 28px;
         font-size: 12px;
         font-weight: 700;
+        color: var(--el-text-color-secondary);
+        background: var(--el-fill-color);
+        border-radius: 50%;
         transition: all 0.3s;
       }
 
       .step-text {
         font-size: 13px;
-        color: var(--el-text-color-secondary);
         font-weight: 500;
+        color: var(--el-text-color-secondary);
         transition: color 0.3s;
       }
 
       &.active .step-dot {
-        background: var(--el-color-primary);
         color: #fff;
-        box-shadow: 0 2px 8px rgba(64, 158, 255, 0.3);
+        background: var(--el-color-primary);
+        box-shadow: 0 2px 8px rgb(64 158 255 / 30%);
       }
 
       &.active .step-text {
@@ -938,16 +978,16 @@
       }
 
       &.done .step-dot {
-        background: var(--el-color-success);
         color: #fff;
+        background: var(--el-color-success);
       }
     }
 
     .step-line {
       width: 60px;
       height: 2px;
-      background: var(--el-fill-color);
       margin: 0 12px;
+      background: var(--el-fill-color);
       border-radius: 1px;
       transition: background 0.3s;
 
@@ -963,10 +1003,12 @@
       opacity 0.2s,
       transform 0.2s;
   }
+
   .fade-enter-from {
     opacity: 0;
     transform: translateX(12px);
   }
+
   .fade-leave-to {
     opacity: 0;
     transform: translateX(-12px);
@@ -974,11 +1016,11 @@
 
   .empty-card {
     padding: 40px 24px;
-    border-radius: 16px;
-    border: 1px dashed var(--el-border-color);
     color: var(--el-text-color-secondary);
     text-align: center;
     background: var(--el-bg-color);
+    border: 1px dashed var(--el-border-color);
+    border-radius: 16px;
   }
 
   .app-grid {
@@ -990,33 +1032,37 @@
   .app-card {
     position: relative;
     padding: 20px 18px 16px;
-    border-radius: 18px;
-    border: 1.5px solid var(--el-border-color-lighter);
-    cursor: pointer;
-    transition: all 0.25s ease;
-    background: linear-gradient(180deg, var(--el-bg-color) 0%, var(--el-bg-color-page) 100%);
-    text-align: center;
     overflow: hidden;
+    text-align: center;
+    cursor: pointer;
+    background: linear-gradient(180deg, var(--el-bg-color) 0%, var(--el-bg-color-page) 100%);
+    border: 1.5px solid var(--el-border-color-lighter);
+    border-radius: 18px;
+    transition: all 0.25s ease;
 
     &:hover {
       border-color: var(--el-color-primary-light-5);
+      box-shadow: 0 12px 30px rgb(15 23 42 / 8%);
       transform: translateY(-3px);
-      box-shadow: 0 12px 30px rgba(15, 23, 42, 0.08);
     }
 
     &.active {
-      border-color: var(--el-color-primary);
       background: linear-gradient(
         135deg,
         var(--el-color-primary-light-9) 0%,
         var(--el-bg-color) 100%
       );
-      box-shadow: 0 10px 26px rgba(64, 158, 255, 0.16);
+      border-color: var(--el-color-primary);
+      box-shadow: 0 10px 26px rgb(64 158 255 / 16%);
     }
 
     &.has-promo {
+      background: linear-gradient(
+        180deg,
+        var(--el-color-danger-light-9) 0%,
+        var(--el-bg-color) 70%
+      );
       border-color: var(--el-color-danger-light-5);
-      background: linear-gradient(180deg, var(--el-color-danger-light-9) 0%, var(--el-bg-color) 70%);
     }
   }
 
@@ -1025,71 +1071,77 @@
     top: 10px;
     right: 10px;
     display: inline-flex;
-    align-items: center;
     gap: 4px;
+    align-items: center;
     padding: 3px 8px;
-    border-radius: 999px;
-    background: linear-gradient(135deg, #f43f5e, #e11d48);
-    color: #fff;
     font-size: 10px;
     font-weight: 700;
-    box-shadow: 0 4px 10px rgba(225, 29, 72, 0.22);
+    color: #fff;
+    background: linear-gradient(135deg, #f43f5e, #e11d48);
+    border-radius: 999px;
+    box-shadow: 0 4px 10px rgb(225 29 72 / 22%);
   }
 
   .app-icon-wrap {
-    width: 50px;
-    height: 50px;
-    border-radius: 13px;
-    background: linear-gradient(135deg, var(--el-color-primary-light-8), var(--el-color-primary-light-9));
-    color: var(--el-color-primary);
     display: flex;
     align-items: center;
     justify-content: center;
+    width: 50px;
+    height: 50px;
     margin: 0 auto 10px;
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6);
+    color: var(--el-color-primary);
+    background: linear-gradient(
+      135deg,
+      var(--el-color-primary-light-8),
+      var(--el-color-primary-light-9)
+    );
+    border-radius: 13px;
+    box-shadow: inset 0 1px 0 rgb(255 255 255 / 60%);
   }
 
   .app-name {
+    margin-bottom: 4px;
     font-size: 14px;
     font-weight: 700;
-    margin-bottom: 4px;
     color: var(--el-text-color-primary);
   }
 
   .app-desc {
-    font-size: 11px;
-    color: var(--el-text-color-secondary);
     margin-bottom: 12px;
     overflow: hidden;
+    font-size: 11px;
+    color: var(--el-text-color-secondary);
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
   .app-footer {
     display: flex;
+    gap: 8px;
     align-items: baseline;
     justify-content: space-between;
-    gap: 8px;
     padding-top: 8px;
     border-top: 1px dashed var(--el-border-color-lighter);
   }
 
   .app-pricing {
     display: flex;
-    align-items: baseline;
     gap: 3px;
+    align-items: baseline;
 
     .price-currency {
       font-size: 12px;
       font-weight: 700;
       color: var(--el-color-primary);
     }
+
     .price-amount {
+      font-family: 'DIN Alternate', 'Roboto Mono', monospace;
       font-size: 21px;
       font-weight: 800;
       color: var(--el-color-primary);
-      font-family: 'DIN Alternate', 'Roboto Mono', monospace;
     }
+
     .price-unit {
       font-size: 11px;
       color: var(--el-text-color-secondary);
@@ -1106,14 +1158,14 @@
   .plan-count {
     margin-top: 2px;
     font-size: 12px;
-    color: var(--el-text-color-secondary);
     font-weight: 600;
+    color: var(--el-text-color-secondary);
   }
 
   .section-title {
     display: flex;
-    align-items: center;
     gap: 8px;
+    align-items: center;
     margin-bottom: 16px;
     font-size: 16px;
     font-weight: 700;
@@ -1132,32 +1184,44 @@
     flex-direction: column;
     gap: 12px;
     padding: 20px 18px;
-    border-radius: 16px;
-    border: 1.5px solid var(--el-border-color-lighter);
-    background: var(--el-bg-color);
-    cursor: pointer;
-    transition: all 0.22s ease;
     overflow: hidden;
+    cursor: pointer;
+    background: var(--el-bg-color);
+    border: 1.5px solid var(--el-border-color-lighter);
+    border-radius: 16px;
+    transition: all 0.22s ease;
 
     &:hover {
       border-color: var(--el-color-primary-light-5);
+      box-shadow: 0 10px 26px rgb(15 23 42 / 6%);
       transform: translateY(-2px);
-      box-shadow: 0 10px 26px rgba(15, 23, 42, 0.06);
     }
 
     &.active {
+      background: linear-gradient(
+        180deg,
+        var(--el-color-primary-light-9) 0%,
+        var(--el-bg-color) 100%
+      );
       border-color: var(--el-color-primary);
-      background: linear-gradient(180deg, var(--el-color-primary-light-9) 0%, var(--el-bg-color) 100%);
-      box-shadow: 0 8px 22px rgba(64, 158, 255, 0.14);
+      box-shadow: 0 8px 22px rgb(64 158 255 / 14%);
     }
 
     &.has-promo {
+      background: linear-gradient(
+        180deg,
+        var(--el-color-danger-light-9) 0%,
+        var(--el-bg-color) 70%
+      );
       border-color: var(--el-color-danger-light-5);
-      background: linear-gradient(180deg, var(--el-color-danger-light-9) 0%, var(--el-bg-color) 70%);
 
       &.active {
+        background: linear-gradient(
+          180deg,
+          var(--el-color-danger-light-8) 0%,
+          var(--el-color-danger-light-9) 100%
+        );
         border-color: var(--el-color-danger);
-        background: linear-gradient(180deg, var(--el-color-danger-light-8) 0%, var(--el-color-danger-light-9) 100%);
       }
     }
   }
@@ -1167,19 +1231,19 @@
     top: 14px;
     right: 14px;
     padding: 4px 10px;
-    border-radius: 999px;
-    background: linear-gradient(135deg, #f43f5e, #e11d48);
-    color: #fff;
     font-size: 11px;
     font-weight: 700;
-    box-shadow: 0 6px 14px rgba(225, 29, 72, 0.22);
+    color: #fff;
+    background: linear-gradient(135deg, #f43f5e, #e11d48);
+    border-radius: 999px;
+    box-shadow: 0 6px 14px rgb(225 29 72 / 22%);
   }
 
   .plan-head {
     display: flex;
+    gap: 10px;
     align-items: center;
     justify-content: space-between;
-    gap: 10px;
     min-height: 22px;
   }
 
@@ -1191,22 +1255,22 @@
 
   .plan-tag {
     padding: 4px 8px;
-    border-radius: 999px;
     font-size: 11px;
     font-weight: 700;
-    background: var(--el-color-primary-light-9);
     color: var(--el-color-primary);
+    background: var(--el-color-primary-light-9);
+    border-radius: 999px;
   }
 
   .plan-tag.promo {
-    background: var(--el-color-danger-light-8);
     color: var(--el-color-danger);
+    background: var(--el-color-danger-light-8);
   }
 
   .plan-pricing {
     display: flex;
-    align-items: baseline;
     gap: 6px;
+    align-items: baseline;
   }
 
   .plan-currency {
@@ -1216,10 +1280,10 @@
   }
 
   .plan-amount {
+    font-family: 'DIN Alternate', 'Roboto Mono', monospace;
     font-size: 26px;
     font-weight: 800;
     color: var(--el-color-primary);
-    font-family: 'DIN Alternate', 'Roboto Mono', monospace;
   }
 
   .plan-card.has-promo .plan-amount,
@@ -1267,12 +1331,12 @@
 
   .config-label {
     display: flex;
-    align-items: center;
     gap: 5px;
+    align-items: center;
+    margin-bottom: 12px;
     font-size: 13px;
     font-weight: 600;
     color: var(--el-text-color-primary);
-    margin-bottom: 12px;
   }
 
   .config-hint {
@@ -1284,32 +1348,32 @@
 
   .type-options {
     display: flex;
-    gap: 8px;
     flex-wrap: wrap;
+    gap: 8px;
   }
 
   .type-chip {
     display: flex;
-    align-items: center;
     gap: 6px;
+    align-items: center;
     padding: 8px 16px;
-    border-radius: 20px;
-    border: 1.5px solid var(--el-border-color-lighter);
-    cursor: pointer;
     font-size: 13px;
     font-weight: 500;
     color: var(--el-text-color-regular);
+    cursor: pointer;
+    border: 1.5px solid var(--el-border-color-lighter);
+    border-radius: 20px;
     transition: all 0.2s;
 
     &:hover {
-      border-color: var(--el-color-primary-light-5);
       color: var(--el-color-primary);
+      border-color: var(--el-color-primary-light-5);
     }
 
     &.active {
-      border-color: var(--el-color-primary);
-      background: var(--el-color-primary-light-9);
       color: var(--el-color-primary);
+      background: var(--el-color-primary-light-9);
+      border-color: var(--el-color-primary);
     }
   }
 
@@ -1327,26 +1391,26 @@
 
     .input-icon {
       position: absolute;
-      left: 14px;
       top: 50%;
-      transform: translateY(-50%);
+      left: 14px;
       color: var(--el-text-color-placeholder);
+      transform: translateY(-50%);
     }
 
     .domain-input {
       width: 100%;
       height: 40px;
       padding: 0 14px 0 40px;
-      border-radius: 10px;
-      border: 1.5px solid var(--el-border-color);
-      outline: none;
       font-size: 14px;
-      transition: all 0.2s;
       background: var(--el-bg-color);
+      border: 1.5px solid var(--el-border-color);
+      border-radius: 10px;
+      outline: none;
+      transition: all 0.2s;
 
       &:focus {
         border-color: var(--el-color-primary);
-        box-shadow: 0 0 0 3px rgba(64, 158, 255, 0.1);
+        box-shadow: 0 0 0 3px rgb(64 158 255 / 10%);
       }
 
       &:disabled {
@@ -1357,26 +1421,26 @@
   }
 
   .config-preview {
-    width: 280px;
     flex-shrink: 0;
+    width: 280px;
   }
 
   .preview-card {
-    border-radius: 16px;
-    border: 1px solid var(--el-border-color-lighter);
     overflow: hidden;
     background: var(--el-bg-color);
-    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.04);
+    border: 1px solid var(--el-border-color-lighter);
+    border-radius: 16px;
+    box-shadow: 0 2px 12px rgb(0 0 0 / 4%);
 
     .preview-header {
       display: flex;
-      align-items: center;
       gap: 8px;
+      align-items: center;
       padding: 16px 20px;
-      background: var(--el-color-primary-light-9);
-      color: var(--el-color-primary);
-      font-weight: 600;
       font-size: 14px;
+      font-weight: 600;
+      color: var(--el-color-primary);
+      background: var(--el-color-primary-light-9);
     }
 
     .preview-body {
@@ -1384,14 +1448,15 @@
 
       .preview-item {
         display: flex;
+        gap: 12px;
         justify-content: space-between;
         padding: 6px 0;
-        gap: 12px;
 
         .preview-key {
           font-size: 12px;
           color: var(--el-text-color-secondary);
         }
+
         .preview-val {
           font-size: 12px;
           font-weight: 500;
@@ -1408,8 +1473,8 @@
 
     .preview-footer {
       display: flex;
-      justify-content: space-between;
       align-items: center;
+      justify-content: space-between;
       padding: 14px 20px;
       border-top: 1px dashed var(--el-border-color-lighter);
 
@@ -1419,23 +1484,23 @@
       }
 
       .preview-total-price {
+        font-family: 'DIN Alternate', 'Roboto Mono', monospace;
         font-size: 20px;
         font-weight: 800;
         color: var(--el-color-primary);
-        font-family: 'DIN Alternate', 'Roboto Mono', monospace;
       }
 
       .preview-price-wrap {
         display: flex;
-        align-items: baseline;
         gap: 8px;
+        align-items: baseline;
       }
 
       .preview-original-price {
-        color: var(--el-text-color-placeholder);
-        font-size: 12px;
-        text-decoration: line-through;
         font-family: 'DIN Alternate', 'Roboto Mono', monospace;
+        font-size: 12px;
+        color: var(--el-text-color-placeholder);
+        text-decoration: line-through;
       }
     }
   }
@@ -1448,11 +1513,11 @@
 
   .payment-detail-card,
   .payment-action-card {
-    background: var(--el-bg-color);
-    border-radius: 16px;
-    border: 1px solid var(--el-border-color-lighter);
     padding: 24px;
-    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.04);
+    background: var(--el-bg-color);
+    border: 1px solid var(--el-border-color-lighter);
+    border-radius: 16px;
+    box-shadow: 0 2px 12px rgb(0 0 0 / 4%);
   }
 
   .payment-detail-card {
@@ -1460,11 +1525,11 @@
 
     .payment-header {
       display: flex;
-      align-items: center;
       gap: 8px;
+      align-items: center;
+      margin-bottom: 20px;
       font-size: 15px;
       font-weight: 600;
-      margin-bottom: 20px;
       color: var(--el-text-color-primary);
     }
 
@@ -1478,6 +1543,7 @@
       span:first-child {
         color: var(--el-text-color-secondary);
       }
+
       span:last-child {
         font-weight: 500;
         color: var(--el-text-color-primary);
@@ -1488,15 +1554,15 @@
       }
 
       &.discount-row span:last-child {
-        color: var(--el-color-danger);
         font-weight: 600;
+        color: var(--el-color-danger);
       }
     }
 
     .payment-total-row {
       display: flex;
-      justify-content: space-between;
       align-items: center;
+      justify-content: space-between;
       padding-top: 16px;
       margin-top: 4px;
 
@@ -1511,21 +1577,22 @@
           font-weight: 600;
           color: var(--el-color-primary);
         }
+
         .price-num {
+          font-family: 'DIN Alternate', 'Roboto Mono', monospace;
           font-size: 28px;
           font-weight: 800;
           color: var(--el-color-primary);
-          font-family: 'DIN Alternate', 'Roboto Mono', monospace;
         }
       }
     }
   }
 
   .payment-action-card {
-    width: 100%;
     display: flex;
     flex-direction: column;
     gap: 20px;
+    width: 100%;
 
     .method-options {
       display: flex;
@@ -1533,77 +1600,77 @@
     }
 
     .method-item {
-      flex: 1;
       display: flex;
+      flex: 1;
+      flex-direction: column;
+      gap: 6px;
       align-items: center;
       justify-content: center;
-      gap: 6px;
       padding: 12px;
-      border-radius: 10px;
-      border: 1.5px solid var(--el-border-color-lighter);
-      cursor: pointer;
       font-size: 13px;
       font-weight: 500;
+      cursor: pointer;
+      border: 1.5px solid var(--el-border-color-lighter);
+      border-radius: 10px;
       transition: all 0.2s;
-      flex-direction: column;
 
       .method-balance {
+        font-family: 'DIN Alternate', 'Roboto Mono', monospace;
         font-size: 11px;
         color: var(--el-color-success);
-        font-family: 'DIN Alternate', 'Roboto Mono', monospace;
       }
 
       &.active {
-        border-color: var(--el-color-primary);
         background: var(--el-color-primary-light-9);
+        border-color: var(--el-color-primary);
       }
     }
   }
 
   .balance-warning {
     padding: 10px 12px;
-    border-radius: 10px;
-    background: var(--el-color-danger-light-9);
-    color: var(--el-color-danger);
     font-size: 13px;
+    color: var(--el-color-danger);
     text-align: center;
+    background: var(--el-color-danger-light-9);
+    border-radius: 10px;
   }
 
   .purchase-btn {
-    width: 100%;
-    height: 48px;
-    border: none;
-    border-radius: 12px;
-    background: linear-gradient(135deg, #409eff 0%, #2563eb 100%);
-    color: #fff;
-    font-size: 15px;
-    font-weight: 700;
-    cursor: pointer;
     display: flex;
+    gap: 8px;
     align-items: center;
     justify-content: center;
-    gap: 8px;
-    box-shadow: 0 4px 14px rgba(64, 158, 255, 0.35);
+    width: 100%;
+    height: 48px;
+    font-size: 15px;
+    font-weight: 700;
+    color: #fff;
+    cursor: pointer;
+    background: linear-gradient(135deg, #409eff 0%, #2563eb 100%);
+    border: none;
+    border-radius: 12px;
+    box-shadow: 0 4px 14px rgb(64 158 255 / 35%);
     transition: all 0.25s;
 
     &:hover {
+      box-shadow: 0 6px 20px rgb(64 158 255 / 45%);
       transform: translateY(-1px);
-      box-shadow: 0 6px 20px rgba(64, 158, 255, 0.45);
     }
 
     &:disabled {
       cursor: not-allowed;
+      box-shadow: none;
       opacity: 0.55;
       transform: none;
-      box-shadow: none;
     }
   }
 
   .payment-hint {
     display: flex;
+    gap: 4px;
     align-items: center;
     justify-content: center;
-    gap: 4px;
     font-size: 11px;
     color: var(--el-text-color-placeholder);
   }
@@ -1611,37 +1678,41 @@
   .success-card {
     max-width: 520px;
     margin: 0 auto;
-    border-radius: 16px;
-    border: 1px solid var(--el-border-color-lighter);
-    background: var(--el-bg-color);
-    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.06);
     overflow: hidden;
+    background: var(--el-bg-color);
+    border: 1px solid var(--el-border-color-lighter);
+    border-radius: 16px;
+    box-shadow: 0 8px 28px rgb(0 0 0 / 6%);
 
     .success-banner {
       display: flex;
       flex-direction: column;
-      align-items: center;
       gap: 6px;
+      align-items: center;
       padding: 28px 32px 22px;
-      background: linear-gradient(160deg, var(--el-color-success-light-8) 0%, var(--el-bg-color) 100%);
       text-align: center;
+      background: linear-gradient(
+        160deg,
+        var(--el-color-success-light-8) 0%,
+        var(--el-bg-color) 100%
+      );
 
       .success-icon {
-        width: 52px;
-        height: 52px;
-        border-radius: 50%;
         display: flex;
         align-items: center;
         justify-content: center;
-        background: var(--el-color-success);
+        width: 52px;
+        height: 52px;
         color: #fff;
-        box-shadow: 0 6px 16px rgba(103, 194, 58, 0.35);
+        background: var(--el-color-success);
+        border-radius: 50%;
+        box-shadow: 0 6px 16px rgb(103 194 58 / 35%);
       }
 
       h3 {
         margin: 8px 0 0;
-        color: var(--el-text-color-primary);
         font-size: 20px;
+        color: var(--el-text-color-primary);
       }
 
       .success-sub {
@@ -1653,13 +1724,13 @@
 
     .success-license-no {
       display: flex;
+      gap: 10px;
       align-items: center;
       justify-content: center;
-      gap: 10px;
-      margin: 0 32px;
       padding: 12px 16px;
-      border-radius: 10px;
+      margin: 0 32px;
       background: var(--el-fill-color-light);
+      border-radius: 10px;
 
       .license-label {
         font-size: 12px;
@@ -1676,21 +1747,21 @@
 
       .copy-btn {
         display: flex;
+        flex-shrink: 0;
         align-items: center;
         justify-content: center;
         width: 26px;
         height: 26px;
-        border: none;
-        border-radius: 6px;
-        background: transparent;
         color: var(--el-text-color-secondary);
         cursor: pointer;
-        flex-shrink: 0;
+        background: transparent;
+        border: none;
+        border-radius: 6px;
         transition: all 0.2s;
 
         &:hover {
-          background: var(--el-color-primary-light-8);
           color: var(--el-color-primary);
+          background: var(--el-color-primary-light-8);
         }
       }
     }
@@ -1700,10 +1771,10 @@
       grid-template-columns: 1fr 1fr;
       gap: 1px;
       margin: 20px 32px 0;
-      border-radius: 10px;
-      border: 1px solid var(--el-border-color-extra-light);
-      background: var(--el-border-color-extra-light);
       overflow: hidden;
+      background: var(--el-border-color-extra-light);
+      border: 1px solid var(--el-border-color-extra-light);
+      border-radius: 10px;
 
       .success-item {
         display: flex;
@@ -1728,17 +1799,17 @@
     .success-amount {
       display: flex;
       align-items: center;
-      margin: 20px 32px 0;
       padding: 14px 20px;
-      border-radius: 10px;
+      margin: 20px 32px 0;
       background: var(--el-color-primary-light-9);
+      border-radius: 10px;
 
       .amount-cell {
-        flex: 1;
         display: flex;
+        flex: 1;
         flex-direction: column;
-        align-items: center;
         gap: 2px;
+        align-items: center;
 
         .amount-label {
           font-size: 12px;
@@ -1771,17 +1842,20 @@
     }
   }
 
-  @media (max-width: 640px) {
+  @media (width <= 640px) {
     .success-card {
       .success-banner {
         padding: 22px 20px 18px;
       }
+
       .success-license-no {
         margin: 0 20px;
       }
+
       .success-grid {
         margin: 16px 20px 0;
       }
+
       .success-amount {
         margin: 16px 20px 0;
       }
@@ -1790,21 +1864,24 @@
 
   .bottom-nav {
     display: flex;
-    justify-content: center;
     gap: 12px;
+    justify-content: center;
     padding: 24px 0;
   }
 
-  @media (max-width: 768px) {
+  @media (width <= 768px) {
     .app-grid {
       grid-template-columns: 1fr;
     }
+
     .config-layout {
       flex-direction: column;
     }
+
     .config-preview {
       width: 100%;
     }
+
     .plan-grid {
       grid-template-columns: repeat(2, 1fr);
     }

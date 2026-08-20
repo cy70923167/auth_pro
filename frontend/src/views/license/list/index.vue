@@ -72,9 +72,26 @@
         </el-table-column>
         <el-table-column prop="expireAt" label="到期时间" width="160" />
         <el-table-column prop="verifyCount" label="验证次数" width="100" align="center" />
-        <el-table-column prop="createdAt" label="创建时间" width="160" />
-        <el-table-column label="操作" width="180" fixed="right">
+        <el-table-column label="站点" width="120" align="center">
           <template #default="{ row }">
+            <span v-if="row.type === 'key'">
+              {{ row.boundSites ?? 0 }} / {{ Number(row.maxSites) ? row.maxSites : '不限' }}
+            </span>
+            <span v-else class="text-secondary">--</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="createdAt" label="创建时间" width="160" />
+        <el-table-column label="操作" width="220" fixed="right">
+          <template #default="{ row }">
+            <el-button
+              v-if="row.type === 'key'"
+              link
+              type="primary"
+              size="small"
+              @click="openSiteDialog(row)"
+            >
+              站点
+            </el-button>
             <el-button link type="primary" size="small" @click="handleEdit(row)">编辑</el-button>
             <el-button link type="primary" size="small" @click="handleToggle(row)">
               {{ row.status === 'active' ? '禁用' : '启用' }}
@@ -195,6 +212,58 @@
         <el-button type="primary" :loading="submitting" @click="handleSubmit">确定</el-button>
       </template>
     </el-dialog>
+
+    <!-- 密钥站点管理弹窗 -->
+    <el-dialog v-model="siteDialog.visible" title="密钥绑定站点" width="680px" destroy-on-close>
+      <el-alert
+        v-if="siteDialog.maxSites > 0"
+        :title="`当前已绑定 ${siteDialog.list.length} / ${siteDialog.maxSites} 个站点，达到上限后新站点验证会被拒绝，可解绑释放名额。`"
+        type="info"
+        show-icon
+        :closable="false"
+        class="mb-3"
+      />
+      <el-alert
+        v-else
+        title="该密钥不限制站点数量。"
+        type="info"
+        show-icon
+        :closable="false"
+        class="mb-3"
+      />
+      <el-table
+        :data="siteDialog.list"
+        size="small"
+        v-loading="siteDialog.loading"
+        max-height="360"
+      >
+        <el-table-column label="类型" width="80">
+          <template #default="{ row }">
+            <el-tag :type="row.targetType === 'ip' ? 'warning' : ''" size="small">
+              {{ row.targetType === 'ip' ? 'IP' : '域名' }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="target" label="站点" min-width="160" show-overflow-tooltip />
+        <el-table-column prop="serverIp" label="最近服务器IP" width="150" show-overflow-tooltip>
+          <template #default="{ row }">
+            <span>{{ row.serverIp || '--' }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="firstSeenAt" label="首次绑定" width="160" />
+        <el-table-column prop="lastSeenAt" label="最近验证" width="160" />
+        <el-table-column label="操作" width="80" align="center">
+          <template #default="{ row }">
+            <el-button link type="danger" size="small" @click="handleUnbindSite(row)"
+              >解绑</el-button
+            >
+          </template>
+        </el-table-column>
+        <template #empty>
+          <el-empty description="暂无绑定站点" :image-size="60" />
+        </template>
+      </el-table>
+    </el-dialog>
   </div>
 </template>
 
@@ -283,6 +352,15 @@
     domain: '',
     expireAt: '',
     remark: ''
+  })
+
+  const siteDialog = reactive({
+    visible: false,
+    loading: false,
+    licenseId: 0,
+    licenseNo: '',
+    maxSites: 0,
+    list: [] as any[]
   })
 
   function validateLicenseTarget(type: string, value: string) {
@@ -564,6 +642,46 @@
     }
   }
 
+  async function openSiteDialog(row: any) {
+    siteDialog.licenseId = Number(row.id)
+    siteDialog.licenseNo = row.licenseNo || ''
+    siteDialog.maxSites = Number(row.maxSites) || 0
+    siteDialog.visible = true
+    await fetchLicenseSites()
+  }
+
+  async function fetchLicenseSites() {
+    siteDialog.loading = true
+    try {
+      const data = await request.get<{ list: any[]; boundSites: number; maxSites: number }>({
+        url: `/api/license/${siteDialog.licenseId}/sites`
+      })
+      siteDialog.list = data?.list || []
+      if (data?.maxSites !== undefined) siteDialog.maxSites = Number(data.maxSites)
+    } catch (error) {
+      console.error('[LicenseList] 加载绑定站点失败:', error)
+      ElMessage.error('加载绑定站点失败')
+    } finally {
+      siteDialog.loading = false
+    }
+  }
+
+  async function handleUnbindSite(row: any) {
+    try {
+      await ElMessageBox.confirm(`确定解绑站点「${row.target}」？解绑后名额立即释放。`, '提示', {
+        type: 'warning'
+      })
+      await request.del({ url: `/api/license/${siteDialog.licenseId}/sites/${row.id}` })
+      ElMessage.success('解绑成功')
+      await fetchLicenseSites()
+      handleSearch()
+    } catch (error) {
+      if (error !== 'cancel' && error !== 'close') {
+        console.error('[LicenseList] 解绑失败:', error)
+      }
+    }
+  }
+
   async function handleSubmit() {
     if (submitting.value) return
     const valid = await formRef.value?.validate().catch(() => false)
@@ -628,6 +746,10 @@
     margin-bottom: 16px;
   }
 
+  .mb-3 {
+    margin-bottom: 12px;
+  }
+
   .table-header {
     display: flex;
     align-items: center;
@@ -646,9 +768,9 @@
 
   .form-tip {
     margin-top: 4px;
-    color: var(--el-text-color-secondary);
     font-size: 12px;
     line-height: 18px;
+    color: var(--el-text-color-secondary);
   }
 
   .owner-cell {

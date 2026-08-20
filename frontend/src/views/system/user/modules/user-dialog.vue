@@ -13,13 +13,29 @@
         <ElInput v-model="formData.nickname" placeholder="请输入账号" />
       </ElFormItem>
       <ElFormItem v-if="dialogType === 'add'" label="密码" prop="password">
-        <ElInput v-model="formData.password" type="password" show-password placeholder="请输入密码（至少6位）" />
+        <ElInput
+          v-model="formData.password"
+          type="password"
+          show-password
+          placeholder="请输入密码（至少6位）"
+        />
       </ElFormItem>
       <ElFormItem v-else label="密码" prop="password">
-        <ElInput v-model="formData.password" type="password" show-password placeholder="留空则不修改密码" />
+        <ElInput
+          v-model="formData.password"
+          type="password"
+          show-password
+          placeholder="留空则不修改密码"
+        />
       </ElFormItem>
       <ElFormItem label="余额" prop="balance">
-        <ElInputNumber v-model="formData.balance" :min="0" :precision="2" :step="100" controls-position="right" />
+        <ElInputNumber
+          v-model="formData.balance"
+          :min="0"
+          :precision="2"
+          :step="100"
+          controls-position="right"
+        />
       </ElFormItem>
     </ElForm>
     <template #footer>
@@ -72,9 +88,7 @@
         { required: true, message: '请输入邮箱', trigger: 'blur' },
         { type: 'email', message: '请输入有效的邮箱', trigger: 'blur' }
       ],
-      nickname: [
-        { required: true, message: '请输入账号', trigger: 'blur' }
-      ]
+      nickname: [{ required: true, message: '请输入账号', trigger: 'blur' }]
     }
     if (dialogType.value === 'add') {
       base.password = [
@@ -136,7 +150,8 @@
             data: {
               email: formData.email,
               nickname: formData.nickname,
-              password: formData.password
+              password: formData.password,
+              balance: formData.balance
             }
           })
           ElMessage.success('添加成功')
@@ -158,6 +173,7 @@
           emit('submit')
         }
       } catch {
+        // 静默吞掉错误，仅通过 finally 复位提交状态
       } finally {
         submitting.value = false
       }
