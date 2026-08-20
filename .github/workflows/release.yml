@@ -73,6 +73,13 @@ jobs:
         env:
           AUTO_PRO_GITHUB_REPOSITORY: cy70923167/auth_pro
           AUTO_PRO_REQUIRE_GIT_RELEASE_NOTES: '1'
+          AUTO_PRO_RELEASE_NOTES: |
+            1.新增活动管理
+            2.新增自助开通代理商
+            3.新增密钥搭建站点上限控制
+            4.优化在线更新
+            5.新增代理商等级自定义
+            6.新增v2签名算法，兼容v1算法，后续强制替换v2算法尽早更换
         run: ./scripts/build-release.sh '${{ steps.version.outputs.value }}'
 
       - name: Run backend tests
