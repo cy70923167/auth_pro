@@ -23,7 +23,7 @@ const consoleTail = () => {
   const style3 = 'color: #667eea; font-weight: bold; font-size: 12px;'
   const style4 = 'color: #999; font-size: 11px;'
   
-  console.log('%c⚡ 授权管理系统 %c v1.1.0 ', style1, style2)
+  console.log('%c⚡ 授权管理系统 %c v1.1.4 ', style1, style2)
   console.log('%c本授权系统完全免费适用，谨防上当受骗', style3)
   console.log('%c官方QQ群：169484041 | 认准官方群', style3)
   console.log('%c━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━', style4)
