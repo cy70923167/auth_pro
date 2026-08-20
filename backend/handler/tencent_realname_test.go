@@ -497,6 +497,10 @@ func TestTencentRealnameFaceSessionRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse session: %v", err)
 	}
+	if !got.ExpireAt.Equal(want.ExpireAt) {
+		t.Fatalf("expireAt = %v, want %v", got.ExpireAt, want.ExpireAt)
+	}
+	got.ExpireAt = want.ExpireAt
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("session = %#v, want %#v", got, want)
 	}
