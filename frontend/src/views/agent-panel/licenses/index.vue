@@ -177,7 +177,7 @@
       >
         <el-table-column label="类型" width="80">
           <template #default="{ row }">
-            <el-tag :type="row.targetType === 'ip' ? 'warning' : ''" size="small">
+            <el-tag :type="row.targetType === 'ip' ? 'warning' : 'info'" size="small">
               {{ row.targetType === 'ip' ? 'IP' : '域名' }}
             </el-tag>
           </template>
